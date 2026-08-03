@@ -15,6 +15,11 @@ def test_parser_accepts_run_configuration() -> None:
     assert args.workspace == Path("/tmp/project")
     assert args.max_steps == 5
 
+    resume_args = build_parser().parse_args(["resume", "run-123", "--max-steps", "20"])
+    assert resume_args.command == "resume"
+    assert resume_args.run_id == "run-123"
+    assert resume_args.max_steps == 20
+
 
 async def test_demo_runs_without_api_key(tmp_path: Path, capsys) -> None:
     (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
@@ -25,6 +30,7 @@ async def test_demo_runs_without_api_key(tmp_path: Path, capsys) -> None:
     assert exit_code == 0
     assert "Demo completed after reading README.md." in output
     assert (tmp_path / ".minicode" / "traces.jsonl").exists()
+    assert (tmp_path / ".minicode" / "checkpoints.db").exists()
 
 
 async def test_run_reports_missing_environment_configuration(
@@ -46,3 +52,14 @@ async def test_console_and_always_approvers(monkeypatch) -> None:
 
     assert await ConsoleApprover().approve(call, PermissionLevel.WRITE)
     assert await AlwaysApprover().approve(call, PermissionLevel.EXECUTE)
+
+
+async def test_resume_reports_missing_checkpoint(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("MINICODE_API_KEY", "test-key")
+    monkeypatch.setenv("MINICODE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("MINICODE_MODEL", "test-model")
+
+    exit_code = await async_main(["resume", "missing-run", "--workspace", str(tmp_path)])
+
+    assert exit_code == 2
+    assert "checkpoint not found: missing-run" in capsys.readouterr().out

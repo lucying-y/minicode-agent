@@ -19,6 +19,7 @@ an agent framework.
 - Read/write/execute permission levels and human approval for state-changing operations.
 - Exact, unique text replacement to make edits predictable and reviewable.
 - Append-only JSONL traces for model responses, tool results, usage, timing, and terminal status.
+- SQLite checkpoints that preserve consistent messages, cumulative usage, and trace sequence.
 - Deterministic Fake Provider for offline testing and demos.
 
 ## Quick start
@@ -58,6 +59,17 @@ uv run minicode run "Inspect the project and fix the failing tests" --workspace 
 
 File writes and shell commands require confirmation. `--yes` skips interactive confirmation for
 trusted tasks, but commands matching the built-in high-risk deny list remain blocked.
+
+Each run prints a `run_id`. A run stopped by a step limit, token limit, tool error, or provider error
+can continue from its last consistent model/tool boundary after raising the relevant limit or fixing
+the external problem:
+
+```bash
+uv run minicode resume RUN_ID --workspace /path/to/repo --max-steps 24
+```
+
+Checkpoints are stored in `.minicode/checkpoints.db`. Completed runs are intentionally immutable and
+cannot be resumed.
 
 ## Execution flow
 
@@ -102,7 +114,7 @@ src/minicode_agent/
 ├── models/        # provider protocol, fake model, OpenAI-compatible adapter
 ├── tools/         # schemas, registry, filesystem and shell tools
 ├── security/      # workspace boundary and permission policy
-├── persistence/   # append-only JSONL traces
+├── persistence/   # append-only JSONL traces and SQLite checkpoints
 └── cli.py         # demo and real-model commands
 ```
 
@@ -110,14 +122,11 @@ src/minicode_agent/
 
 - The provider currently targets `/chat/completions`; streaming is not implemented.
 - Context usage is estimated from serialized character length, not a provider tokenizer.
-- JSONL traces support debugging and analysis, but not checkpoint recovery yet.
 - MCP, sub-agents, a web console, and benchmark evaluation are intentionally deferred until the
   single-agent runtime is stable.
 
 ## Roadmap
 
-1. SQLite checkpoints and interrupted-run recovery.
-2. Repeatable repository-task evaluation with success, steps, tokens, and latency metrics.
-3. SSE API and a small React execution console.
-4. Isolated Docker execution environment.
-
+1. Repeatable repository-task evaluation with success, steps, tokens, and latency metrics.
+2. SSE API and a small React execution console.
+3. Isolated Docker execution environment.

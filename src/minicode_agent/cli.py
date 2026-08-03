@@ -9,7 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from minicode_agent.models import FakeModelProvider, OpenAICompatibleProvider
-from minicode_agent.persistence import JsonlTraceSink
+from minicode_agent.persistence import JsonlTraceSink, SqliteCheckpointStore
 from minicode_agent.runtime import AgentConfig, AgentRuntime, ModelResponse, RunStatus, ToolCall
 from minicode_agent.security import PermissionLevel, PermissionPolicy
 from minicode_agent.tools import create_default_registry
@@ -45,19 +45,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run", help="run a task with an OpenAI-compatible model")
     run.add_argument("task")
-    run.add_argument("--workspace", type=Path, default=Path.cwd())
-    run.add_argument("--max-steps", type=int, default=12)
-    run.add_argument("--max-context-tokens", type=int, default=32_000)
-    run.add_argument(
+    _add_runtime_options(run)
+
+    resume = subparsers.add_parser("resume", help="resume a non-completed checkpoint")
+    resume.add_argument("run_id")
+    _add_runtime_options(resume)
+    return parser
+
+
+def _add_runtime_options(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--workspace", type=Path, default=Path.cwd())
+    command.add_argument("--max-steps", type=int, default=12)
+    command.add_argument("--max-context-tokens", type=int, default=32_000)
+    command.add_argument(
         "--yes",
         action="store_true",
         help="approve writes and commands without prompting; blocked commands remain denied",
     )
-    return parser
 
 
 def _trace_path(workspace: Path) -> Path:
     return workspace.resolve() / ".minicode" / "traces.jsonl"
+
+
+def _checkpoint_path(workspace: Path) -> Path:
+    return workspace.resolve() / ".minicode" / "checkpoints.db"
 
 
 async def run_demo(workspace: Path) -> int:
@@ -77,6 +89,7 @@ async def run_demo(workspace: Path) -> int:
         model,
         create_default_registry(workspace),
         trace=JsonlTraceSink(_trace_path(workspace)),
+        checkpoint=SqliteCheckpointStore(_checkpoint_path(workspace)),
     )
     result = await runtime.run("Inspect this repository and finish the deterministic demo.")
     print(result.output)
@@ -84,7 +97,7 @@ async def run_demo(workspace: Path) -> int:
     return 0 if result.status is RunStatus.COMPLETED else 1
 
 
-async def run_task(args: argparse.Namespace) -> int:
+async def run_model_command(args: argparse.Namespace) -> int:
     load_dotenv()
     api_key = os.getenv("MINICODE_API_KEY", "")
     base_url = os.getenv("MINICODE_BASE_URL", "").strip()
@@ -118,8 +131,16 @@ async def run_task(args: argparse.Namespace) -> int:
                 max_context_tokens=args.max_context_tokens,
             ),
             trace=JsonlTraceSink(_trace_path(workspace)),
+            checkpoint=SqliteCheckpointStore(_checkpoint_path(workspace)),
         )
-        result = await runtime.run(args.task)
+        if args.command == "resume":
+            try:
+                result = await runtime.resume(args.run_id)
+            except ValueError as exc:
+                print(str(exc))
+                return 2
+        else:
+            result = await runtime.run(args.task)
     finally:
         await provider.aclose()
 
@@ -135,7 +156,7 @@ async def async_main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "demo":
         return await run_demo(args.workspace)
-    return await run_task(args)
+    return await run_model_command(args)
 
 
 def main() -> None:
@@ -144,4 +165,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

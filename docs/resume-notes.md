@@ -11,6 +11,9 @@ Only claim behavior that is present in the repository and backed by tests or an 
   state-changing operations.
 - Added deterministic context budgeting that keeps complete assistant/tool blocks, plus append-only
   JSONL traces covering model usage, tool results, duration, errors, and terminal run status.
+- Persisted the last consistent execution state in SQLite, retaining the run ID, cumulative usage,
+  complete messages, and trace sequence so limited or failed runs can resume without replaying
+  completed steps.
 - Implemented an OpenAI-compatible provider and CLI, using mocked HTTP responses and a Fake Provider
   to test the complete runtime without external API dependencies.
 
@@ -25,5 +28,4 @@ reuse scores from reference projects.
 4. What can bypass an application-level command deny list, and how would Docker change the threat
    model?
 5. How does the Fake Provider make failure paths deterministic?
-6. How would checkpoint recovery differ from the current append-only trace?
-
+6. Why is a checkpoint saved only after a complete model/tool boundary rather than after every tool?
