@@ -4,10 +4,13 @@ import argparse
 import asyncio
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
+from minicode_agent.evaluation import EvaluationRunner, load_task_suite
 from minicode_agent.models import FakeModelProvider, OpenAICompatibleProvider
 from minicode_agent.persistence import JsonlTraceSink, SqliteCheckpointStore
 from minicode_agent.runtime import AgentConfig, AgentRuntime, ModelResponse, RunStatus, ToolCall
@@ -50,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
     resume = subparsers.add_parser("resume", help="resume a non-completed checkpoint")
     resume.add_argument("run_id")
     _add_runtime_options(resume)
+
+    evaluate = subparsers.add_parser("eval", help="run a repeatable repository task suite")
+    evaluate.add_argument("--tasks", type=Path, default=Path("evals/tasks.json"))
+    evaluate.add_argument("--output", type=Path, default=Path(".minicode/evals"))
+    evaluate.add_argument("--max-steps", type=int, default=12)
+    evaluate.add_argument("--max-context-tokens", type=int, default=32_000)
     return parser
 
 
@@ -97,7 +106,7 @@ async def run_demo(workspace: Path) -> int:
     return 0 if result.status is RunStatus.COMPLETED else 1
 
 
-async def run_model_command(args: argparse.Namespace) -> int:
+def _load_model_configuration() -> tuple[str, str, str] | None:
     load_dotenv()
     api_key = os.getenv("MINICODE_API_KEY", "")
     base_url = os.getenv("MINICODE_BASE_URL", "").strip()
@@ -113,7 +122,15 @@ async def run_model_command(args: argparse.Namespace) -> int:
     ]
     if missing:
         print(f"Missing configuration: {', '.join(missing)}. Copy .env.example to .env.")
+        return None
+    return api_key, base_url, model_name
+
+
+async def run_model_command(args: argparse.Namespace) -> int:
+    model_configuration = _load_model_configuration()
+    if model_configuration is None:
         return 2
+    api_key, base_url, model_name = model_configuration
 
     workspace = args.workspace.resolve()
     approver = AlwaysApprover() if args.yes else ConsoleApprover()
@@ -152,10 +169,52 @@ async def run_model_command(args: argparse.Namespace) -> int:
     return 0 if result.status is RunStatus.COMPLETED else 1
 
 
+async def run_evaluation_command(args: argparse.Namespace) -> int:
+    model_configuration = _load_model_configuration()
+    if model_configuration is None:
+        return 2
+    api_key, base_url, model_name = model_configuration
+    try:
+        suite = load_task_suite(args.tasks.resolve())
+    except (OSError, ValueError) as exc:
+        print(f"Unable to load evaluation tasks: {exc}")
+        return 2
+
+    run_name = f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+    output_dir = args.output.resolve() / run_name
+    provider = OpenAICompatibleProvider(
+        api_key=api_key,
+        base_url=base_url,
+        model=model_name,
+    )
+    try:
+        report = await EvaluationRunner(
+            model=provider,
+            model_name=model_name,
+            suite=suite,
+            output_dir=output_dir,
+            config=AgentConfig(
+                max_steps=args.max_steps,
+                max_context_tokens=args.max_context_tokens,
+            ),
+        ).run()
+    finally:
+        await provider.aclose()
+
+    print(
+        f"evaluation model={report.model} passed={report.passed_tasks}/{report.total_tasks} "
+        f"success_rate={report.success_rate:.2%}"
+    )
+    print(f"report={output_dir / 'report.json'}")
+    return 0 if report.passed_tasks == report.total_tasks else 1
+
+
 async def async_main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "demo":
         return await run_demo(args.workspace)
+    if args.command == "eval":
+        return await run_evaluation_command(args)
     return await run_model_command(args)
 
 

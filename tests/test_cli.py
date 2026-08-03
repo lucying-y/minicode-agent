@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
 from minicode_agent.cli import AlwaysApprover, ConsoleApprover, async_main, build_parser
-from minicode_agent.runtime import ToolCall
+from minicode_agent.models import FakeModelProvider
+from minicode_agent.runtime import ModelResponse, ToolCall
 from minicode_agent.security import PermissionLevel
 
 
@@ -19,6 +21,11 @@ def test_parser_accepts_run_configuration() -> None:
     assert resume_args.command == "resume"
     assert resume_args.run_id == "run-123"
     assert resume_args.max_steps == 20
+
+    eval_args = build_parser().parse_args(["eval", "--tasks", "custom.json"])
+    assert eval_args.command == "eval"
+    assert eval_args.tasks == Path("custom.json")
+    assert eval_args.max_steps == 12
 
 
 async def test_demo_runs_without_api_key(tmp_path: Path, capsys) -> None:
@@ -63,3 +70,80 @@ async def test_resume_reports_missing_checkpoint(tmp_path: Path, monkeypatch, ca
 
     assert exit_code == 2
     assert "checkpoint not found: missing-run" in capsys.readouterr().out
+
+
+async def test_eval_reports_missing_task_suite(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("MINICODE_API_KEY", "test-key")
+    monkeypatch.setenv("MINICODE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("MINICODE_MODEL", "test-model")
+
+    exit_code = await async_main(
+        [
+            "eval",
+            "--tasks",
+            str(tmp_path / "missing.json"),
+            "--output",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "Unable to load evaluation tasks" in capsys.readouterr().out
+
+
+async def test_eval_cli_runs_suite_and_writes_report(tmp_path: Path, monkeypatch, capsys) -> None:
+    class ClosableFakeModel(FakeModelProvider):
+        async def aclose(self) -> None:
+            return None
+
+    task_path = tmp_path / "tasks.json"
+    task_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "tasks": [
+                    {
+                        "id": "fix-value",
+                        "prompt": "Change value to 2",
+                        "files": {"app.py": "value = 1\n"},
+                        "verify_command": (
+                            "python3 -c 'from app import value; assert value == 2'"
+                        ),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake_model = ClosableFakeModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="edit-1",
+                        name="edit_file",
+                        arguments={"path": "app.py", "old_text": "1", "new_text": "2"},
+                    )
+                ]
+            ),
+            ModelResponse(content="done"),
+        ]
+    )
+    monkeypatch.setenv("MINICODE_API_KEY", "test-key")
+    monkeypatch.setenv("MINICODE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("MINICODE_MODEL", "fake-model")
+    monkeypatch.setattr(
+        "minicode_agent.cli.OpenAICompatibleProvider",
+        lambda **kwargs: fake_model,
+    )
+    output_root = tmp_path / "reports"
+
+    exit_code = await async_main(
+        ["eval", "--tasks", str(task_path), "--output", str(output_root)]
+    )
+
+    assert exit_code == 0
+    assert "passed=1/1" in capsys.readouterr().out
+    reports = list(output_root.glob("*/report.json"))
+    assert len(reports) == 1
+    assert json.loads(reports[0].read_text(encoding="utf-8"))["success_rate"] == 1.0

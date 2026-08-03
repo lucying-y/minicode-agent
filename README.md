@@ -20,6 +20,7 @@ an agent framework.
 - Exact, unique text replacement to make edits predictable and reviewable.
 - Append-only JSONL traces for model responses, tool results, usage, timing, and terminal status.
 - SQLite checkpoints that preserve consistent messages, cumulative usage, and trace sequence.
+- Repeatable repository-task evaluation with deterministic verification and JSON metric reports.
 - Deterministic Fake Provider for offline testing and demos.
 
 ## Quick start
@@ -71,6 +72,24 @@ uv run minicode resume RUN_ID --workspace /path/to/repo --max-steps 24
 Checkpoints are stored in `.minicode/checkpoints.db`. Completed runs are intentionally immutable and
 cannot be resumed.
 
+## Evaluation
+
+After configuring a model, run the bundled three-task suite:
+
+```bash
+uv run minicode eval --tasks evals/tasks.json
+```
+
+Each invocation creates a new `.minicode/evals/<timestamp>-<id>/` directory containing:
+
+- the isolated workspace produced for every task;
+- the full JSONL trajectory and SQLite checkpoint for each run;
+- a `report.json` with pass/fail, runtime status, steps, input/output tokens, and elapsed time.
+
+Success is determined by each task's verification command rather than the model's final message. A
+non-perfect suite exits with status 1. Evaluation files can contain executable verification commands;
+only run task suites you trust, preferably inside a disposable container.
+
 ## Execution flow
 
 ```text
@@ -104,7 +123,8 @@ uv run pytest --cov
 
 Tests use temporary workspaces, mocked HTTP responses, and a deterministic model. They cover the
 agent loop, limits, context selection, path escape prevention, approvals, file tools, command
-failure/timeout behavior, provider translation, CLI demo, and JSONL event ordering.
+failure/timeout behavior, checkpoint recovery, provider translation, CLI demo, repository-task
+evaluation, and JSONL event ordering.
 
 ## Structure
 
@@ -115,6 +135,7 @@ src/minicode_agent/
 ├── tools/         # schemas, registry, filesystem and shell tools
 ├── security/      # workspace boundary and permission policy
 ├── persistence/   # append-only JSONL traces and SQLite checkpoints
+├── evaluation/    # task schemas, isolated execution, verification, reports
 └── cli.py         # demo and real-model commands
 ```
 
@@ -122,11 +143,11 @@ src/minicode_agent/
 
 - The provider currently targets `/chat/completions`; streaming is not implemented.
 - Context usage is estimated from serialized character length, not a provider tokenizer.
-- MCP, sub-agents, a web console, and benchmark evaluation are intentionally deferred until the
-  single-agent runtime is stable.
+- MCP, sub-agents, and a web console are intentionally deferred until the single-agent runtime and
+  evaluation baseline are stable.
 
 ## Roadmap
 
-1. Repeatable repository-task evaluation with success, steps, tokens, and latency metrics.
+1. Expand evaluation tasks and compare multiple model/configuration combinations.
 2. SSE API and a small React execution console.
 3. Isolated Docker execution environment.

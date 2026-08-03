@@ -16,9 +16,11 @@ Only claim behavior that is present in the repository and backed by tests or an 
   completed steps.
 - Implemented an OpenAI-compatible provider and CLI, using mocked HTTP responses and a Fake Provider
   to test the complete runtime without external API dependencies.
+- Built a repeatable repository-task evaluator that creates isolated fixtures, verifies final code
+  with executable acceptance checks, and reports success rate, steps, Token usage, and latency.
 
-Add benchmark numbers only after running the planned evaluation harness with a real model. Do not
-reuse scores from reference projects.
+Add benchmark numbers only after running `minicode eval` with a real model and preserving its
+`report.json`. Do not reuse scores from reference projects.
 
 ## Likely interview questions
 
@@ -29,3 +31,4 @@ reuse scores from reference projects.
    model?
 5. How does the Fake Provider make failure paths deterministic?
 6. Why is a checkpoint saved only after a complete model/tool boundary rather than after every tool?
+7. Why should task success come from an external verifier rather than the model's final answer?
