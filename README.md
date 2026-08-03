@@ -47,13 +47,14 @@ cd web
 npm install
 npm run build
 cd ..
-uv run minicode web --demo
+uv run minicode web --demo --workspace /path/to/repo
 ```
 
 Open <http://127.0.0.1:8000>. The demo uses no API tokens and pauses before its shell command so the
-browser approval flow can be exercised. Run `uv run minicode web` instead to use the model configured
-in `.env`. See [the Chinese Web Console guide](docs/web-console.zh-CN.md) for the UI, API, lifecycle,
-and persistence details.
+browser approval and streaming-output flows can be exercised. Run
+`uv run minicode web --workspace /path/to/repo` instead to use the model configured in `.env`. See
+[the Chinese Web Console guide](docs/web-console.zh-CN.md) for the UI, API, lifecycle, and persistence
+details. The configured default workspace is editable for each new run.
 
 ## Configure a model
 
@@ -177,7 +178,8 @@ web/               # React, TypeScript and Vite console
 
 ## Deliberate limitations
 
-- The provider currently targets `/chat/completions`; streaming is not implemented.
+- The provider targets OpenAI-compatible `/chat/completions` and streams standard SSE deltas; it does
+  not support provider-specific protocols.
 - Context usage is estimated from serialized character length, not a provider tokenizer.
 - Web run summaries and SSE event buffers are process-local; restarting the server clears the run
   list, while JSONL traces and SQLite checkpoints remain in each workspace.

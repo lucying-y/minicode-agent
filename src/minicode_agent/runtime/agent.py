@@ -1,10 +1,11 @@
 """Bounded and observable model-tool execution loop."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
-from minicode_agent.models.base import ModelProvider
+from minicode_agent.models.base import ModelProvider, StreamingModelProvider
 from minicode_agent.persistence import (
     CheckpointStore,
     NullCheckpointStore,
@@ -16,6 +17,7 @@ from minicode_agent.runtime.context import ContextManager
 from minicode_agent.runtime.types import (
     AgentConfig,
     Message,
+    ModelResponse,
     RunCheckpoint,
     RunResult,
     RunStatus,
@@ -49,6 +51,7 @@ class AgentRuntime:
         context: ContextManager | None = None,
         trace: TraceSink | None = None,
         checkpoint: CheckpointStore | None = None,
+        on_model_delta: Callable[[str, int, str], None] | None = None,
     ) -> None:
         self.model = model
         self.tools = tools
@@ -56,6 +59,7 @@ class AgentRuntime:
         self.context = context or ContextManager(self.config.max_context_tokens)
         self.trace = trace or NullTraceSink()
         self.checkpoint = checkpoint or NullCheckpointStore()
+        self.on_model_delta = on_model_delta
         self._sequence = 0
 
     async def run(self, task: str, *, run_id: str | None = None) -> RunResult:
@@ -113,7 +117,7 @@ class AgentRuntime:
         for step in range(start_step, self.config.max_steps + 1):
             try:
                 model_messages = self.context.prepare(messages)
-                response = await self.model.complete(model_messages, self.tools.schemas())
+                response = await self._complete_model(run_id, step, model_messages)
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 self._emit(run_id, "model_error", {"step": step, "error": error})
@@ -210,6 +214,26 @@ class AgentRuntime:
             return await self.tools.execute(call)
         except Exception as exc:
             return ToolResult(content=f"{type(exc).__name__}: {exc}", is_error=True)
+
+    async def _complete_model(
+        self,
+        run_id: str,
+        step: int,
+        messages: list[Message],
+    ) -> ModelResponse:
+        if not getattr(self.model, "supports_streaming", False):
+            return await self.model.complete(messages, self.tools.schemas())
+
+        provider = cast(StreamingModelProvider, self.model)
+        response: ModelResponse | None = None
+        async for chunk in provider.stream_complete(messages, self.tools.schemas()):
+            if chunk.delta and self.on_model_delta is not None:
+                self.on_model_delta(run_id, step, chunk.delta)
+            if chunk.response is not None:
+                response = chunk.response
+        if response is None:
+            raise RuntimeError("streaming provider ended without a final response")
+        return response
 
     def _finish(
         self,

@@ -115,3 +115,23 @@ async def test_runtime_reports_model_errors() -> None:
 
     assert result.status is RunStatus.FAILED
     assert "no scripted response" in str(result.error)
+
+
+async def test_runtime_forwards_streaming_model_deltas() -> None:
+    deltas: list[tuple[str, int, str]] = []
+    model = FakeModelProvider(
+        [ModelResponse(content="streamed response")],
+        streaming=True,
+        stream_chunk_size=5,
+    )
+    runtime = AgentRuntime(
+        model,
+        StubTools(),
+        on_model_delta=lambda run_id, step, delta: deltas.append((run_id, step, delta)),
+    )
+
+    result = await runtime.run("stream the answer", run_id="stream-run")
+
+    assert result.status is RunStatus.COMPLETED
+    assert "".join(delta for _, _, delta in deltas) == "streamed response"
+    assert {(run_id, step) for run_id, step, _ in deltas} == {("stream-run", 1)}

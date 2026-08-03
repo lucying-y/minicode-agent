@@ -13,6 +13,7 @@ Agent Loop 的前提下，补上了以下交互：
 - 查看模型响应、工具调用、运行状态和最终结果组成的时间线；
 - 在浏览器中批准或拒绝写文件、执行 Shell 等有副作用的操作；
 - 通过 SSE 自动接收运行事件，无需频繁刷新；
+- 实时拼接并显示模型返回的文本分片；
 - 查看单个事件的原始 JSON 数据；
 - 恢复因步数、Token、工具或模型错误而停止的任务；
 - 在桌面和移动端使用同一套界面。
@@ -38,7 +39,7 @@ cd ..
 ### 2.2 不消耗 API Token 的演示
 
 ```bash
-uv run minicode web --demo
+uv run minicode web --demo --workspace /path/to/repository
 ```
 
 浏览器打开 <http://127.0.0.1:8000>，创建任意任务。Fake Provider 会固定请求：
@@ -50,8 +51,8 @@ uv run minicode web --demo
 }
 ```
 
-页面会进入“等待审批”。批准后执行 `pwd` 并完成任务。这条路径适合检查页面、SSE 和审批链路，
-不会调用外部模型。
+页面会进入“等待审批”。批准后执行 `pwd`，第二次模型响应会以分片形式实时显示。这条路径适合
+检查页面、模型流式输出、SSE 和审批链路，不会调用外部模型。
 
 ### 2.3 使用真实模型
 
@@ -66,10 +67,14 @@ MINICODE_MODEL=your-model-name
 然后运行：
 
 ```bash
-uv run minicode web
+uv run minicode web --workspace /path/to/repository
 ```
 
 `.env` 只从启动命令所在目录读取。请在项目根目录启动，且不要提交真实密钥。
+
+真实模型必须兼容 OpenAI `/chat/completions` 的 SSE 格式：请求接受 `stream: true` 和
+`stream_options.include_usage`，文本位于 `choices[0].delta.content`，工具调用位于
+`choices[0].delta.tool_calls`，并以 `data: [DONE]` 结束。
 
 ### 2.4 常用启动参数
 
@@ -77,10 +82,13 @@ uv run minicode web
 uv run minicode web \
   --host 127.0.0.1 \
   --port 8000 \
+  --workspace /path/to/repository \
   --web-dist web/dist
 ```
 
-默认只监听本机回环地址。除非已经增加认证、网络隔离和操作系统级沙箱，否则不要监听公网地址。
+`--workspace` 会在服务启动时校验目录，并作为新任务弹窗的默认值；弹窗中的路径仍可修改，用于
+临时切换到另一个现有目录。默认只监听本机回环地址。除非已经增加认证、网络隔离和操作系统级
+沙箱，否则不要监听公网地址。
 
 ## 3. 页面怎样使用
 
@@ -129,7 +137,10 @@ Web 层只负责创建后台任务、转发事件、等待审批结果和把状�
 浏览器 POST /api/runs
   -> RunManager 预分配 run_id 并记录 run_queued
   -> 后台 asyncio Task 启动 AgentRuntime
-  -> Runtime 请求模型
+  -> Runtime 以 stream=true 请求模型
+  -> Provider 解析文本和工具调用分片
+  -> model_output_delta 经 SSE 增量显示在浏览器
+  -> Provider 组装最终 ModelResponse
   -> Trace 同时写入 JSONL 并转发给 RunManager
   -> SSE 把新事件发送到浏览器
   -> 有副作用的工具进入 waiting_approval
@@ -143,7 +154,9 @@ Web 层只负责创建后台任务、转发事件、等待审批结果和把状�
 - `runtime_sequence` 是持久化 Trace 中的序号；
 - `id` 是 Web Run Manager 为 SSE 分配的进程内序号。
 
-两者分开是因为 `run_queued`、`approval_required` 等 Web 事件并不全是 Runtime Trace 事件。
+两者分开是因为 `run_queued`、`model_output_delta`、`approval_required` 等 Web 事件并不全是
+Runtime Trace 事件。高频 `model_output_delta` 只进入 Web 内存事件缓冲；完整的
+`model_response` 才写入 JSONL Trace 和 Checkpoint。
 
 ## 6. 网页审批为什么不会阻塞服务
 
@@ -245,7 +258,7 @@ npm run build
 - 主动取消正在运行或等待审批的任务；
 - 从持久化数据自动重建 Web 运行列表；
 - Git Diff 和测试结果的专用视图；
-- 模型文本 Token 级流式输出；
+- 服务商专有的流式协议和非文本内容分片；
 - 多进程任务队列和跨实例事件总线；
 - Docker 执行沙箱；
 - 多用户账号、鉴权和权限隔离；

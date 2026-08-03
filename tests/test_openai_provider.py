@@ -79,3 +79,59 @@ async def test_provider_rejects_invalid_response_shape() -> None:
         await provider.complete([Message(role="user", content="test")], [])
     await client.aclose()
 
+
+async def test_provider_streams_text_and_assembles_tool_calls() -> None:
+    stream_body = "\n\n".join(
+        [
+            'data: {"choices":[{"delta":{"content":"Hello "}}]}',
+            (
+                'data: {"choices":[{"delta":{"content":"world",'
+                '"tool_calls":[{"index":0,"id":"call-1","function":'
+                '{"name":"read_","arguments":"{\\"path\\":"}}]}}]}'
+            ),
+            (
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"function":{"name":"file","arguments":"\\"README.md\\"}"}}]}}]}'
+            ),
+            'data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":4}}',
+            "data: [DONE]",
+            "",
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["stream"] is True
+        assert body["stream_options"] == {"include_usage": True}
+        return httpx.Response(200, text=stream_body, headers={"content-type": "text/event-stream"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        api_key="secret",
+        base_url="https://example.test/v1",
+        model="test-model",
+        client=client,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in provider.stream_complete(
+            [Message(role="user", content="inspect")],
+            [
+                ToolSchema(
+                    name="read_file",
+                    description="Read a file",
+                    parameters={"type": "object"},
+                )
+            ],
+        )
+    ]
+    await client.aclose()
+
+    assert [chunk.delta for chunk in chunks if chunk.delta] == ["Hello ", "world"]
+    response = chunks[-1].response
+    assert response is not None
+    assert response.content == "Hello world"
+    assert response.tool_calls[0].name == "read_file"
+    assert response.tool_calls[0].arguments == {"path": "README.md"}
+    assert response.usage.total_tokens == 15

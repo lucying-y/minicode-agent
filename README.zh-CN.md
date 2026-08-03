@@ -52,15 +52,18 @@ cd web
 npm install
 npm run build
 cd ..
-uv run minicode web --demo
+uv run minicode web --demo --workspace /path/to/repo
 ```
 
 浏览器打开 <http://127.0.0.1:8000>。`--demo` 使用脚本化 Fake Provider，不消耗 API Token，
 并会在执行 Shell 命令前停下来等待网页批准。使用 `.env` 中的真实模型配置时，运行：
 
 ```bash
-uv run minicode web
+uv run minicode web --workspace /path/to/repo
 ```
+
+`--workspace` 设置页面创建任务时的默认工作区，仍可在每个新任务中单独修改。Fake Provider 和
+真实模型都会把模型文本增量显示在执行时间线中。
 
 界面操作、API、运行生命周期和数据保存方式见
 [《Web Console 使用与设计说明》](docs/web-console.zh-CN.md)。
@@ -179,7 +182,7 @@ web/               # React、TypeScript 与 Vite 控制台
 
 ## 当前限制
 
-- 模型适配器目前使用 `/chat/completions`，尚未实现流式输出。
+- 模型适配器使用 OpenAI 兼容 `/chat/completions`，支持标准 SSE 增量输出，但不适配服务商专有协议。
 - 上下文用量通过序列化后的字符长度估算，尚未使用模型对应的 Tokenizer。
 - Web 运行摘要和 SSE 事件缓冲保存在当前服务进程内；服务重启后运行列表会清空，但目标工作区中
   的 JSONL Trace 和 SQLite Checkpoint 会保留。

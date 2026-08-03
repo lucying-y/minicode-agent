@@ -39,7 +39,10 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
 
     @app.get("/api/health", response_model=HealthView)
     async def health() -> HealthView:
-        return HealthView(model=manager.model_name, default_workspace=str(Path.cwd()))
+        return HealthView(
+            model=manager.model_name,
+            default_workspace=str(manager.default_workspace),
+        )
 
     @app.get("/api/runs", response_model=list[RunView])
     async def list_runs() -> list[RunView]:

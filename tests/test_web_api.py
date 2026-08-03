@@ -108,3 +108,40 @@ async def test_web_rejects_missing_workspace(tmp_path: Path) -> None:
 
     assert response.status_code == 400
     assert "workspace is not a directory" in response.json()["detail"]
+
+
+async def test_web_publishes_streaming_model_output(tmp_path: Path) -> None:
+    model = FakeModelProvider(
+        [ModelResponse(content="streamed web response")],
+        streaming=True,
+        stream_chunk_size=4,
+    )
+    manager = RunManager(
+        lambda: model,
+        model_name="streaming-fake",
+        default_workspace=tmp_path,
+    )
+    app = create_app(manager)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        health = (await client.get("/api/health")).json()
+        assert health["default_workspace"] == str(tmp_path)
+        created = await client.post(
+            "/api/runs",
+            json={"task": "stream", "workspace": str(tmp_path)},
+        )
+        run_id = created.json()["run_id"]
+        await _wait_for_status(manager, run_id, "completed")
+
+        events = (await client.get(f"/api/runs/{run_id}/events/history")).json()
+        deltas = [
+            event["data"]["delta"]
+            for event in events
+            if event["event_type"] == "model_output_delta"
+        ]
+        assert "".join(deltas) == "streamed web response"
+        assert events[-2]["event_type"] == "model_response"
+        assert events[-1]["event_type"] == "run_finished"
+
+    await manager.shutdown()

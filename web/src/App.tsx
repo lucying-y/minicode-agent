@@ -96,6 +96,26 @@ function eventPresentation(event: ConsoleEvent) {
   }
 }
 
+function pendingModelOutput(events: ConsoleEvent[]) {
+  const outputs = new Map<number, { content: string; timestamp: string; eventId: number }>();
+  for (const event of events) {
+    const step = Number(event.data.step);
+    if (!Number.isFinite(step)) continue;
+    if (event.event_type === "model_output_delta" && typeof event.data.delta === "string") {
+      const current = outputs.get(step);
+      outputs.set(step, {
+        content: `${current?.content || ""}${event.data.delta}`,
+        timestamp: event.timestamp,
+        eventId: event.id,
+      });
+    } else if (event.event_type === "model_response") {
+      outputs.delete(step);
+    }
+  }
+  const latest = [...outputs.entries()].sort((left, right) => right[1].eventId - left[1].eventId)[0];
+  return latest ? { step: latest[0], ...latest[1] } : null;
+}
+
 function NewRunDialog({
   open,
   defaultWorkspace,
@@ -287,19 +307,23 @@ function RunSidebar({
 
 function Timeline({
   events,
+  running,
   selectedEventId,
   onSelect,
 }: {
   events: ConsoleEvent[];
+  running: boolean;
   selectedEventId: number | null;
   onSelect: (event: ConsoleEvent) => void;
 }) {
-  if (!events.length) {
+  const visibleEvents = events.filter((event) => event.event_type !== "model_output_delta");
+  const liveOutput = pendingModelOutput(events);
+  if (!visibleEvents.length && !liveOutput) {
     return <div className="empty-timeline"><Clock3 size={20} />等待第一个运行事件</div>;
   }
   return (
     <div className="timeline">
-      {events.map((event) => {
+      {visibleEvents.map((event) => {
         const presentation = eventPresentation(event);
         const Icon = presentation.icon;
         const content = typeof event.data.content === "string" ? event.data.content : "";
@@ -322,6 +346,18 @@ function Timeline({
           </button>
         );
       })}
+      {liveOutput && (
+        <div className={`timeline-entry streaming-entry tone-model ${running ? "active" : ""}`} aria-live="polite">
+          <span className="timeline-icon"><Bot size={16} /></span>
+          <span className="timeline-body">
+            <span className="timeline-heading">
+              <strong>{running ? `模型正在生成 · 第 ${liveOutput.step} 步` : `模型输出中断 · 第 ${liveOutput.step} 步`}</strong>
+              <time>{formatTime(liveOutput.timestamp)}</time>
+            </span>
+            <span className="streaming-output">{liveOutput.content}{running && <span className="streaming-cursor" />}</span>
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -422,14 +458,28 @@ export default function App() {
     }
     let disposed = false;
     setSelectedEvent(null);
+    setEvents([]);
     api.getEvents(selectedId).then((history) => {
-      if (!disposed) setEvents(history);
+      if (!disposed) {
+        setEvents((current) => {
+          const merged = new Map([...history, ...current].map((event) => [event.id, event]));
+          return [...merged.values()].sort((left, right) => left.id - right.id);
+        });
+      }
     }).catch((reason) => setError(reason instanceof Error ? reason.message : "事件加载失败"));
 
     const source = new EventSource(`/api/runs/${selectedId}/events`);
     source.onmessage = (message) => {
       const event = JSON.parse(message.data) as ConsoleEvent;
       setEvents((current) => current.some((item) => item.id === event.id) ? current : [...current, event]);
+      if (event.event_type === "model_output_delta") {
+        setRuns((current) => current.map((run) => run.run_id === selectedId ? {
+          ...run,
+          event_count: Math.max(run.event_count, event.id),
+          updated_at: event.timestamp,
+        } : run));
+        return;
+      }
       void Promise.all([api.getRun(selectedId), api.listRuns()]).then(([detail, nextRuns]) => {
         if (disposed) return;
         setRuns(nextRuns.map((run) => run.run_id === detail.run_id ? detail : run));
@@ -522,7 +572,12 @@ export default function App() {
               </div>
 
               <div className="timeline-header"><MessageSquareText size={16} /><span>执行时间线</span>{!terminalStatuses.has(selectedRun.status) && <span className="live-indicator">LIVE</span>}</div>
-              <Timeline events={events} selectedEventId={selectedEvent?.id || null} onSelect={setSelectedEvent} />
+              <Timeline
+                events={events}
+                running={!terminalStatuses.has(selectedRun.status)}
+                selectedEventId={selectedEvent?.id || null}
+                onSelect={setSelectedEvent}
+              />
             </>
           ) : (
             <div className="empty-workspace">

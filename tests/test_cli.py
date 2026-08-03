@@ -31,7 +31,17 @@ def test_parser_accepts_run_configuration() -> None:
     assert web_args.command == "web"
     assert web_args.port == 9000
     assert web_args.web_dist == Path("web/dist")
+    assert web_args.workspace == Path.cwd()
     assert web_args.demo
+
+
+async def test_web_rejects_invalid_default_workspace(tmp_path: Path, capsys) -> None:
+    exit_code = await async_main(
+        ["web", "--demo", "--workspace", str(tmp_path / "missing")]
+    )
+
+    assert exit_code == 2
+    assert "Invalid default workspace" in capsys.readouterr().out
 
 
 async def test_demo_runs_without_api_key(tmp_path: Path, capsys) -> None:

@@ -347,7 +347,8 @@ sequenceDiagram
 ## 7. 模型适配层
 
 `ModelProvider` 是 Runtime 依赖的最小协议：接收内部消息与工具 Schema，返回统一的
-`ModelResponse`。
+`ModelResponse`。Provider 也可以声明支持 `stream_complete()`，逐步返回 `ModelStreamChunk`；
+每个 Chunk 要么携带文本增量，要么携带组装完成的最终响应。
 
 当前真实实现是
 [`OpenAICompatibleProvider`](../src/minicode_agent/models/openai_compatible.py)，它调用：
@@ -368,16 +369,23 @@ Provider 主要做两次转换。
 
 响应后：
 
-- 读取第一条 `choices[0].message`；
-- 解析工具调用中的 JSON 参数；
+- 流式请求设置 `stream=true` 和 `stream_options.include_usage`；
+- 逐行解析 SSE 的 `data:` 内容和 `[DONE]` 结束标记；
+- 把 `choices[0].delta.content` 作为临时增量事件发送给 Web Console；
+- 按 `index` 拼接分片工具调用的 ID、名称和 JSON 参数；
 - 转换为内部 `ToolCall`；
 - 将 `prompt_tokens` 和 `completion_tokens` 转换为 `TokenUsage`。
+
+连接结束后，Provider 将所有文本和工具分片组装为原来的 `ModelResponse`。因此工具执行、消息历史、
+Token 限制、Trace 和 Checkpoint 不需要理解服务商的 SSE 格式。没有声明流式能力的 Provider 仍走
+原来的 `complete()` 路径。
 
 HTTP 错误、非法 JSON、缺少 `choices` 或工具参数不是对象时，会转换成
 `ModelProviderError`。Runtime 捕获后将任务标记为 `failed`，同时记录错误轨迹和最终
 Checkpoint。
 
-Provider 默认请求超时为 120 秒，目前没有自动重试、退避或流式响应。
+Provider 默认请求超时为 120 秒，目前没有自动重试或退避。流式路径支持标准 OpenAI 兼容文本和
+工具调用 Delta，不处理服务商专有事件或多模态内容分片。
 
 ### 7.1 为什么还需要 Fake Provider
 
@@ -677,11 +685,12 @@ cd web
 npm install
 npm run build
 cd ..
-uv run minicode web --demo
+uv run minicode web --demo --workspace /path/to/repository
 ```
 
-打开 <http://127.0.0.1:8000>。`--demo` 不消耗 API Token，但会完整演示 SSE 和网页审批。
-使用 `.env` 中配置的真实模型时运行 `uv run minicode web`。详细说明见
+打开 <http://127.0.0.1:8000>。`--demo` 不消耗 API Token，但会完整演示模型流式文本、SSE 和
+网页审批。使用 `.env` 中配置的真实模型时运行
+`uv run minicode web --workspace /path/to/repository`。详细说明见
 [《Web Console 使用与设计说明》](web-console.zh-CN.md)。
 
 ### 16.3 真实 CLI 任务
@@ -717,7 +726,7 @@ uv run pytest --cov
 
 理解限制和理解能力同样重要：
 
-1. Provider 只适配 `/chat/completions`，没有模型 Token 级流式响应、重试和限流；
+1. Provider 只适配 `/chat/completions` 的标准 SSE，没有服务商专有协议、自动重试和限流；
 2. 上下文按字符数估算 Token，没有模型专用 Tokenizer，也没有历史摘要；
 3. Trace 没有通用的秘密信息内容脱敏；
 4. Shell 在宿主机运行，拒绝列表不能替代 Docker 沙箱；
@@ -754,6 +763,10 @@ HTTP 请求。
 React 前端通过 REST 创建、查询、审批和恢复任务，通过 SSE 接收增量事件。它展示运行历史、状态、
 指标、执行时间线和原始事件 JSON。服务重启后 Web 列表会清空，但各工作区中的 JSONL Trace 和
 SQLite Checkpoint 仍然存在。
+
+模型文本分片作为 `model_output_delta` Web 事件实时发送，React 按模型步数合并为一个持续增长的
+输出区域，避免每个分片占据一条时间线记录。高频分片不写入持久化 Trace；最终完整
+`model_response` 到达后替换临时输出，并按原有流程持久化。
 
 当前 API 路径、运行时序、持久化边界和界面操作详见
 [《Web Console 使用与设计说明》](web-console.zh-CN.md)。下一阶段应补充任务取消、从持久化数据

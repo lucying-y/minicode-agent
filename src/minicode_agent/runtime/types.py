@@ -51,6 +51,13 @@ class ModelResponse(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
+class ModelStreamChunk(BaseModel):
+    """One text delta or the assembled final response from a streaming provider."""
+
+    delta: str = ""
+    response: ModelResponse | None = None
+
+
 class ToolResult(BaseModel):
     """Structured result returned by a tool executor."""
 

@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     web = subparsers.add_parser("web", help="serve the local Web Console and API")
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8000)
+    web.add_argument("--workspace", type=Path, default=Path.cwd())
     web.add_argument("--web-dist", type=Path, default=Path("web/dist"))
     web.add_argument("--demo", action="store_true", help="use a scripted model without an API key")
     return parser
@@ -236,8 +237,16 @@ async def run_web_command(args: argparse.Namespace) -> int:
                             )
                         ],
                     ),
-                    ModelResponse(content="Demo completed after confirming the workspace."),
-                ]
+                    ModelResponse(
+                        content=(
+                            "Demo completed after confirming the workspace. "
+                            "Streaming output is arriving incrementally in the Console."
+                        )
+                    ),
+                ],
+                streaming=True,
+                stream_chunk_size=8,
+                stream_delay_seconds=0.08,
             )
 
     else:
@@ -253,7 +262,15 @@ async def run_web_command(args: argparse.Namespace) -> int:
                 model=model_name,
             )
 
-    manager = RunManager(provider_factory, model_name=model_name)
+    try:
+        manager = RunManager(
+            provider_factory,
+            model_name=model_name,
+            default_workspace=args.workspace,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"Invalid default workspace: {exc}")
+        return 2
     app = create_app(manager, static_dir=args.web_dist)
     server = uvicorn.Server(
         uvicorn.Config(app, host=args.host, port=args.port, log_level="info")

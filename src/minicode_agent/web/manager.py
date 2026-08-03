@@ -97,9 +97,16 @@ class _WebApprover:
 class RunManager:
     """Own in-memory run state while durable Runtime data stays in each workspace."""
 
-    def __init__(self, provider_factory: Callable[[], ModelProvider], *, model_name: str) -> None:
+    def __init__(
+        self,
+        provider_factory: Callable[[], ModelProvider],
+        *,
+        model_name: str,
+        default_workspace: Path | None = None,
+    ) -> None:
         self.provider_factory = provider_factory
         self.model_name = model_name
+        self.default_workspace = Workspace(default_workspace or Path.cwd()).root
         self._records: dict[str, _RunRecord] = {}
 
     def list_runs(self) -> list[RunView]:
@@ -197,6 +204,11 @@ class RunManager:
             config=record.config,
             trace=trace,
             checkpoint=SqliteCheckpointStore(record.workspace / ".minicode" / "checkpoints.db"),
+            on_model_delta=lambda _run_id, step, delta: self._publish(
+                record,
+                "model_output_delta",
+                {"step": step, "delta": delta},
+            ),
         )
         try:
             result = (
