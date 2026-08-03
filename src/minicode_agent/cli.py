@@ -59,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--output", type=Path, default=Path(".minicode/evals"))
     evaluate.add_argument("--max-steps", type=int, default=12)
     evaluate.add_argument("--max-context-tokens", type=int, default=32_000)
+
+    web = subparsers.add_parser("web", help="serve the local Web Console and API")
+    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--port", type=int, default=8000)
+    web.add_argument("--web-dist", type=Path, default=Path("web/dist"))
     return parser
 
 
@@ -209,12 +214,40 @@ async def run_evaluation_command(args: argparse.Namespace) -> int:
     return 0 if report.passed_tasks == report.total_tasks else 1
 
 
+async def run_web_command(args: argparse.Namespace) -> int:
+    model_configuration = _load_model_configuration()
+    if model_configuration is None:
+        return 2
+    api_key, base_url, model_name = model_configuration
+
+    import uvicorn
+
+    from minicode_agent.web import RunManager, create_app
+
+    manager = RunManager(
+        lambda: OpenAICompatibleProvider(
+            api_key=api_key,
+            base_url=base_url,
+            model=model_name,
+        ),
+        model_name=model_name,
+    )
+    app = create_app(manager, static_dir=args.web_dist)
+    server = uvicorn.Server(
+        uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+    )
+    await server.serve()
+    return 0
+
+
 async def async_main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "demo":
         return await run_demo(args.workspace)
     if args.command == "eval":
         return await run_evaluation_command(args)
+    if args.command == "web":
+        return await run_web_command(args)
     return await run_model_command(args)
 
 
