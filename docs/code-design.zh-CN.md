@@ -70,6 +70,8 @@ Tool Calling 表示模型不只返回自然语言，还可以返回一段结构�
 | Trace | 按顺序记录运行过程中发生的事件 | JSONL 轨迹 |
 | Checkpoint | 可用于恢复任务的最近状态快照 | SQLite Checkpoint |
 | Evaluation | 用外部校验命令判断代码任务是否成功 | `EvaluationRunner` |
+| Run Manager | 管理网页创建的后台运行和实时事件 | `RunManager` |
+| SSE | 服务端持续向浏览器单向推送事件 | `/api/runs/{id}/events` |
 
 ## 2. 项目目标与边界
 
@@ -81,12 +83,13 @@ MiniCode Agent 关注的是一个小而完整的单 Agent Runtime：
 - 可以限制步数、Token 和上下文；
 - 可以审批有副作用的工具；
 - 可以记录轨迹并从 Checkpoint 恢复；
-- 可以通过独立测试命令评测最终代码。
+- 可以通过独立测试命令评测最终代码；
+- 可以通过本地 Web Console 创建、观察、审批和恢复任务。
 
 它目前不是以下产品：
 
 - 不是 IDE 插件；
-- 不是带网页的聊天应用；
+- 不是面向公网的多用户聊天平台；
 - 不是操作系统级代码沙箱；
 - 不是多 Agent 协作框架；
 - 不是完整复刻 Claude Code、Codex 或 SWE-agent。
@@ -97,8 +100,12 @@ MiniCode Agent 关注的是一个小而完整的单 Agent Runtime：
 
 ```mermaid
 flowchart TD
-    User["用户 / CLI"] --> CLI["命令行入口"]
+    User["用户"] --> CLI["命令行入口"]
+    User --> React["React Web Console"]
+    React <--> API["FastAPI REST + SSE"]
+    API --> Manager["RunManager"]
     CLI --> Runtime["AgentRuntime"]
+    Manager --> Runtime
     Runtime --> Context["ContextManager"]
     Runtime <--> Provider["ModelProvider"]
     Runtime --> Registry["ToolRegistry"]
@@ -116,12 +123,14 @@ flowchart TD
 - `tools`：定义模型可以请求的能力，并执行通过校验的调用；
 - `security`：限制工作区路径，决定工具是否需要审批或必须拒绝；
 - `persistence`：记录事件和保存恢复快照；
-- `evaluation`：在独立目录运行固定任务，并用外部命令验收。
+- `evaluation`：在独立目录运行固定任务，并用外部命令验收；
+- `web`：提供 API、进程内运行管理、SSE 转发和异步网页审批；
+- `web/` 前端目录：提供 React 运行列表、时间线、事件详情和审批界面。
 
 这种拆分有两个直接好处：
 
 1. Runtime 不依赖某个具体模型或工具，可以用 Fake Provider 和 Stub Tool 测试；
-2. 后续增加 Web API 时，可以复用 Runtime，而不需要把终端交互写进核心循环。
+2. CLI 和 Web API 复用同一个 Runtime，终端或网页交互不会进入核心循环。
 
 ## 4. 目录与源码入口
 
@@ -148,9 +157,17 @@ src/minicode_agent/
 ├── persistence/
 │   ├── trace.py                   # JSONL 事件轨迹
 │   └── checkpoint.py              # SQLite 状态快照
-└── evaluation/
-    ├── models.py                  # 评测任务和报告 Schema
-    └── runner.py                  # 隔离任务、执行、校验、报告
+├── evaluation/
+│   ├── models.py                  # 评测任务和报告 Schema
+│   └── runner.py                  # 隔离任务、执行、校验、报告
+└── web/
+    ├── app.py                     # FastAPI、REST、SSE 和静态文件
+    ├── manager.py                 # 后台任务、事件广播和网页审批
+    └── models.py                  # Web API 请求与响应 Schema
+web/
+├── src/App.tsx                    # React 页面和交互状态
+├── src/api.ts                     # API 客户端
+└── src/styles.css                 # 桌面与移动端样式
 ```
 
 核心源码链接：
@@ -160,6 +177,7 @@ src/minicode_agent/
 - [`tools/registry.py`](../src/minicode_agent/tools/registry.py)
 - [`security/policy.py`](../src/minicode_agent/security/policy.py)
 - [`models/openai_compatible.py`](../src/minicode_agent/models/openai_compatible.py)
+- [`web/manager.py`](../src/minicode_agent/web/manager.py)
 
 ## 5. 核心数据结构
 
@@ -461,12 +479,13 @@ CLI 默认使用 `ConsoleApprover`，把工具参数打印到终端并等待 `y/
 
 ### 9.4 敏感文件与 Trace 风险
 
-`.gitignore` 和 Agent 工具权限是两套机制。`.env` 被 Git 忽略，只代表 Git 不会提交它，并不
-代表 `read_file` 无法读取它。
+`.gitignore` 和 Agent 工具权限是两套机制。为避免模型通过文件工具读取常见凭据，当前
+`Workspace` 会拒绝 `.env`、`.git`、`.ssh`、`.npmrc` 等敏感路径，包括这些目录中的子路径。
+`.env.example`、`.env.sample` 和 `.env.template` 作为不应包含真实密钥的配置模板仍允许读取。
 
-当前的目录列举和文本搜索会跳过部分依赖目录，但 `read_file` 没有敏感文件拒绝规则。只要文件在
-工作区内且可以按 UTF-8 读取，模型就可能请求读取 `.env` 等文件。`run_shell` 在获得批准后能
-访问的范围更大。
+目录列举和文本搜索同样会跳过敏感目录及常见依赖目录。这个规则只覆盖 MiniCode Agent 的文件
+工具；`run_shell` 在用户批准后仍以当前系统用户权限运行，可能通过命令访问工作区外资源或环境
+变量，因此不能把敏感路径拒绝理解成完整沙箱。
 
 此外，Trace 会保存完整工具参数与结果。如果工具读到了密钥，内容还可能进入模型上下文和本地
 `.minicode/traces.jsonl`。Provider 自身不会主动把 API Key 写入 Trace，但工具读取造成的泄露
@@ -474,13 +493,13 @@ CLI 默认使用 `ConsoleApprover`，把工具参数打印到终端并等待 `y/
 
 当前使用时应遵守以下约束：
 
-- 目标工作区内不要放置模型不应读取的凭据；
-- 不要在包含真实 `.env` 的 Runtime 仓库上使用自动批准；
+- 目标工作区内仍不要放置模型不应接触的额外凭据；
+- 不要对可能读取环境变量或绕过文件工具的任务使用自动批准；
 - 审批 Shell 命令前检查它是否会读取环境变量或工作区外文件；
 - Trace 按敏感运行日志处理，不要直接提交或公开。
 
-后续应增加敏感路径拒绝规则、可配置允许列表、工具结果脱敏和 Trace 字段脱敏。这一项应优先于
-把 Agent 暴露为长期运行的 Web 服务。
+后续仍应增加可配置允许列表、工具结果脱敏和 Trace 字段脱敏。当前 Web 服务只适合监听本机，
+不应直接暴露到公网。
 
 ## 10. 上下文管理
 
@@ -536,7 +555,7 @@ JSONL 表示每一行都是一个完整 JSON 对象。追加写入比维护一�
 | --- | --- |
 | `run_started` | 原始任务与 Runtime 配置 |
 | `model_response` | 步数、模型文本、工具调用、Token、上下文消息数 |
-| `tool_result` | 调用参数、结果、错误状态、工具耗时 |
+| `tool_result` | 调用参数、结果、错误状态、审批耗时和实际工具耗时 |
 | `model_error` | Provider 或上下文准备异常 |
 | `run_resumed` | 从哪个状态和第几步恢复 |
 | `run_finished` | 最终状态、步数、累计 Token 和错误 |
@@ -625,7 +644,7 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 
 ## 15. 测试策略
 
-项目当前有 28 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
+项目当前有 33 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
 
 - Agent Runtime：使用 Fake Provider 和 Stub Tool；
 - HTTP Provider：使用 `httpx.MockTransport`，不发送真实请求；
@@ -633,7 +652,8 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 - 审批：使用固定返回允许或拒绝的 Approver；
 - Checkpoint：使用临时 SQLite 文件；
 - CLI：调用命令入口并检查输出与退出码；
-- Evaluation：使用临时题目和确定性校验命令。
+- Evaluation：使用临时题目和确定性校验命令；
+- Web API：使用进程内 ASGI 客户端验证创建、审批、事件、停止限制和恢复。
 
 真实模型评测用于验证完整链路，但不能替代单元测试，因为模型输出具有成本、延迟和不确定性。
 
@@ -648,7 +668,23 @@ uv run minicode demo --workspace .
 
 Demo 使用 Fake Provider，只读取一个项目文件，不需要 API Key。
 
-### 16.2 真实任务
+### 16.2 Web Console
+
+首次安装并构建前端：
+
+```bash
+cd web
+npm install
+npm run build
+cd ..
+uv run minicode web --demo
+```
+
+打开 <http://127.0.0.1:8000>。`--demo` 不消耗 API Token，但会完整演示 SSE 和网页审批。
+使用 `.env` 中配置的真实模型时运行 `uv run minicode web`。详细说明见
+[《Web Console 使用与设计说明》](web-console.zh-CN.md)。
+
+### 16.3 真实 CLI 任务
 
 ```bash
 uv run minicode run \
@@ -659,7 +695,7 @@ uv run minicode run \
 不要对不可信仓库使用 `--yes`。正常模式下，读取自动允许，写文件和 Shell 命令会显示参数并等待
 人工确认。
 
-### 16.3 恢复任务
+### 16.4 恢复 CLI 任务
 
 ```bash
 uv run minicode resume RUN_ID \
@@ -669,7 +705,7 @@ uv run minicode resume RUN_ID \
 
 恢复时必须指向原工作区，因为 Checkpoint 数据库位于该工作区的 `.minicode` 目录。
 
-### 16.4 运行评测和测试
+### 16.5 运行评测和测试
 
 ```bash
 uv run minicode eval --tasks evals/tasks.json
@@ -681,12 +717,12 @@ uv run pytest --cov
 
 理解限制和理解能力同样重要：
 
-1. 只有 CLI，没有 Web API、浏览器界面和实时事件推送；
-2. Provider 只适配 `/chat/completions`，没有流式响应、重试和限流；
-3. 上下文按字符数估算 Token，没有模型专用 Tokenizer，也没有历史摘要；
-4. `read_file` 没有敏感路径拒绝，Trace 也没有秘密信息脱敏；
-5. Shell 在宿主机运行，拒绝列表不能替代 Docker 沙箱；
-6. 没有任务取消、并发队列和跨进程任务调度；
+1. Provider 只适配 `/chat/completions`，没有模型 Token 级流式响应、重试和限流；
+2. 上下文按字符数估算 Token，没有模型专用 Tokenizer，也没有历史摘要；
+3. Trace 没有通用的秘密信息内容脱敏；
+4. Shell 在宿主机运行，拒绝列表不能替代 Docker 沙箱；
+5. Web 运行摘要和事件缓冲只在当前进程内，重启后不会从持久化数据重建列表；
+6. 没有主动取消、跨进程任务队列、多用户认证、Git Diff 和测试结果专用视图；
 7. Checkpoint 不能为未记录的文件副作用提供事务回滚；
 8. 文件工具只处理 UTF-8 文本，`edit_file` 只支持唯一精确替换；
 9. 评测集规模很小，不能作为通用 Coding Agent 能力结论；
@@ -694,10 +730,9 @@ uv run pytest --cov
 
 这些限制不是通过修改宣传措辞解决的，而应在后续版本中逐项实现、测试和评测。
 
-## 18. 后续 Web Console 应怎样接入
+## 18. Web Console 怎样接入 Runtime
 
-Web 界面不应该直接复制一套 Agent Loop。合理做法是继续复用当前 Runtime，在外层增加服务和事件
-适配：
+Web 界面没有复制 Agent Loop，而是在现有 Runtime 外增加服务和事件适配：
 
 ```mermaid
 flowchart LR
@@ -711,16 +746,18 @@ flowchart LR
     Approval --> Manager
 ```
 
-为了支持这套结构，首先应补齐敏感路径策略与日志脱敏。随后 Runtime 需要增加：
+`RunManager` 为每个任务预分配 `run_id`，在后台 `asyncio.Task` 中运行 `AgentRuntime`。
+`_ForwardingTraceSink` 一边把 Runtime 事件追加到 JSONL，一边转发到进程内事件缓冲和 SSE
+订阅者。`_WebApprover` 使用 `asyncio.Future` 等待浏览器的批准或拒绝，等待期间不会阻塞其他
+HTTP 请求。
 
-1. 通用事件回调或事件总线，而不只写 JSONL；
-2. 可以等待网页响应的异步 Approval Broker；
-3. 任务取消信号和后台任务生命周期；
-4. Run 列表与详情查询；
-5. Git Diff、测试结果和工具调用的结构化展示数据。
+React 前端通过 REST 创建、查询、审批和恢复任务，通过 SSE 接收增量事件。它展示运行历史、状态、
+指标、执行时间线和原始事件 JSON。服务重启后 Web 列表会清空，但各工作区中的 JSONL Trace 和
+SQLite Checkpoint 仍然存在。
 
-前端最小闭环应包含任务创建、执行时间线、工具审批、Diff、测试结果、历史运行和恢复操作。这样
-既能展示 Agent Runtime，也能形成完整的全栈项目。
+当前 API 路径、运行时序、持久化边界和界面操作详见
+[《Web Console 使用与设计说明》](web-console.zh-CN.md)。下一阶段应补充任务取消、从持久化数据
+重建列表、Git Diff、测试结果视图和 Docker 隔离。
 
 ## 19. 推荐源码阅读顺序
 
@@ -738,6 +775,8 @@ flowchart LR
 9. [`models/openai_compatible.py`](../src/minicode_agent/models/openai_compatible.py)：理解真实 HTTP 协议；
 10. [`cli.py`](../src/minicode_agent/cli.py) 和
     [`evaluation/runner.py`](../src/minicode_agent/evaluation/runner.py)：最后看完整组装和评测。
+11. [`web/manager.py`](../src/minicode_agent/web/manager.py) 和
+    [`web/app.py`](../src/minicode_agent/web/app.py)：理解后台运行、网页审批、REST 和 SSE。
 
 ## 20. 初学者常见问题
 
@@ -766,5 +805,5 @@ Context 是本次发送给模型的有限消息；Checkpoint 是恢复任务所�
 
 ### 这个项目现在最值得增加什么？
 
-优先增加 Web API、SSE 事件、网页审批和 Git Diff，再增加 Docker 隔离。它们能够在保留当前
-Runtime 设计的同时，补齐真实使用体验、安全边界和全栈展示能力。
+优先增加任务取消、Git Diff 和测试结果视图，再增加 Docker 隔离。它们能够在保留当前 Runtime
+设计的同时，继续补齐真实使用体验和安全边界。

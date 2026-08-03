@@ -29,6 +29,7 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 - 使用 SQLite 保存一致执行边界上的消息、累计用量和轨迹序号，支持断点恢复。
 - 提供可重复运行的仓库任务评测，通过确定性校验命令判断结果并生成 JSON 报告。
 - 提供确定性的 Fake Provider，用于离线测试和演示。
+- 提供本地 React Web Console，通过 FastAPI、SSE、网页审批和 Checkpoint 恢复观察与控制任务。
 
 ## 快速开始
 
@@ -41,6 +42,28 @@ uv run minicode demo --workspace .
 
 演示命令不会调用外部模型。它会执行一次预设工具调用，并将运行轨迹写入
 `.minicode/traces.jsonl`。
+
+### Web Console
+
+首次使用需要安装并构建前端：
+
+```bash
+cd web
+npm install
+npm run build
+cd ..
+uv run minicode web --demo
+```
+
+浏览器打开 <http://127.0.0.1:8000>。`--demo` 使用脚本化 Fake Provider，不消耗 API Token，
+并会在执行 Shell 命令前停下来等待网页批准。使用 `.env` 中的真实模型配置时，运行：
+
+```bash
+uv run minicode web
+```
+
+界面操作、API、运行生命周期和数据保存方式见
+[《Web Console 使用与设计说明》](docs/web-console.zh-CN.md)。
 
 ## 配置模型
 
@@ -149,17 +172,21 @@ src/minicode_agent/
 ├── security/      # 工作区边界与权限策略
 ├── persistence/   # 只追加 JSONL 轨迹与 SQLite Checkpoint
 ├── evaluation/    # 任务定义、隔离执行、结果校验与报告
+├── web/           # FastAPI、进程内 Run Manager、SSE 与网页审批
 └── cli.py         # 离线演示与真实模型命令入口
+web/               # React、TypeScript 与 Vite 控制台
 ```
 
 ## 当前限制
 
 - 模型适配器目前使用 `/chat/completions`，尚未实现流式输出。
 - 上下文用量通过序列化后的字符长度估算，尚未使用模型对应的 Tokenizer。
-- MCP、多 Agent 和 Web Console 暂未实现，当前优先保证单 Agent Runtime 和评测基线稳定。
+- Web 运行摘要和 SSE 事件缓冲保存在当前服务进程内；服务重启后运行列表会清空，但目标工作区中
+  的 JSONL Trace 和 SQLite Checkpoint 会保留。
+- 当前没有任务取消、Git Diff 视图、Docker 沙箱、多用户认证、MCP 或多 Agent 编排。
 
 ## 后续计划
 
 1. 扩充评测任务，并比较不同模型和运行参数组合。
-2. 增加 SSE API 和轻量级 React 执行控制台。
+2. 增加结构化 Git Diff、测试结果视图和任务取消。
 3. 增加基于 Docker 的隔离执行环境。

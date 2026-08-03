@@ -24,6 +24,7 @@ an agent framework.
 - SQLite checkpoints that preserve consistent messages, cumulative usage, and trace sequence.
 - Repeatable repository-task evaluation with deterministic verification and JSON metric reports.
 - Deterministic Fake Provider for offline testing and demos.
+- Local React Web Console with FastAPI, SSE event updates, browser approvals, and checkpoint resume.
 
 ## Quick start
 
@@ -36,6 +37,23 @@ uv run minicode demo --workspace .
 
 The demo does not call an external model. It performs a scripted tool call and writes its trace to
 `.minicode/traces.jsonl`.
+
+### Web Console
+
+Build the frontend once, then start the local console with the scripted provider:
+
+```bash
+cd web
+npm install
+npm run build
+cd ..
+uv run minicode web --demo
+```
+
+Open <http://127.0.0.1:8000>. The demo uses no API tokens and pauses before its shell command so the
+browser approval flow can be exercised. Run `uv run minicode web` instead to use the model configured
+in `.env`. See [the Chinese Web Console guide](docs/web-console.zh-CN.md) for the UI, API, lifecycle,
+and persistence details.
 
 ## Configure a model
 
@@ -152,18 +170,22 @@ src/minicode_agent/
 ├── security/      # workspace boundary and permission policy
 ├── persistence/   # append-only JSONL traces and SQLite checkpoints
 ├── evaluation/    # task schemas, isolated execution, verification, reports
+├── web/           # FastAPI app, in-process run manager, SSE and browser approval
 └── cli.py         # demo and real-model commands
+web/               # React, TypeScript and Vite console
 ```
 
 ## Deliberate limitations
 
 - The provider currently targets `/chat/completions`; streaming is not implemented.
 - Context usage is estimated from serialized character length, not a provider tokenizer.
-- MCP, sub-agents, and a web console are intentionally deferred until the single-agent runtime and
-  evaluation baseline are stable.
+- Web run summaries and SSE event buffers are process-local; restarting the server clears the run
+  list, while JSONL traces and SQLite checkpoints remain in each workspace.
+- There is no task cancellation endpoint, Git diff view, container sandbox, multi-user
+  authentication, MCP, or sub-agent orchestration yet.
 
 ## Roadmap
 
 1. Expand evaluation tasks and compare multiple model/configuration combinations.
-2. SSE API and a small React execution console.
-3. Isolated Docker execution environment.
+2. Add structured Git diff and test-result views plus task cancellation.
+3. Add an isolated Docker execution environment.
