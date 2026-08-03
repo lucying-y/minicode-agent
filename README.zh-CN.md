@@ -65,6 +65,9 @@ uv run minicode web --workspace /path/to/repo
 `--workspace` 设置页面创建任务时的默认工作区，仍可在每个新任务中单独修改。Fake Provider 和
 真实模型都会把模型文本增量显示在执行时间线中。
 
+端口不与模型模式绑定。需要同时运行演示和真实模型时，可约定演示使用 `8000`、真实模型使用
+`8001`，也可以通过 `--port` 选择任意空闲端口。
+
 界面操作、API、运行生命周期和数据保存方式见
 [《Web Console 使用与设计说明》](docs/web-console.zh-CN.md)。
 

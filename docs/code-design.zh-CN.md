@@ -473,6 +473,11 @@ resolved = /projects/private.txt
 CLI 默认使用 `ConsoleApprover`，把工具参数打印到终端并等待 `y/N`。`--yes` 会自动批准普通
 写入和执行，但无法绕过内置的高风险命令拒绝规则。
 
+Web Console 始终使用 `_WebApprover`，当前没有暴露审批模式开关。项目也没有真正的“完全访问”
+或由另一个模型执行的“替我审批”：`--yes` 只是把 Approver 换成 `AlwaysApprover`，工作区边界、
+敏感路径和高风险命令规则仍然生效。若后续增加 UI 模式，适合明确区分人工审批、自动批准允许项
+和只读模式。
+
 当前拒绝规则是对命令字符串中的危险片段进行检查，例如 `rm -rf`、`sudo`、`mkfs`、
 `git reset --hard` 和 `git clean -fd`。
 

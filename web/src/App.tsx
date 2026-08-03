@@ -7,6 +7,7 @@ import {
   CircleDot,
   Clock3,
   Code2,
+  Copy,
   FileCode2,
   FolderGit2,
   ListTree,
@@ -114,6 +115,39 @@ function pendingModelOutput(events: ConsoleEvent[]) {
   }
   const latest = [...outputs.entries()].sort((left, right) => right[1].eventId - left[1].eventId)[0];
   return latest ? { step: latest[0], ...latest[1] } : null;
+}
+
+type TimelineItem =
+  | { kind: "event"; event: ConsoleEvent }
+  | { kind: "tool-group"; events: ConsoleEvent[] };
+
+const toolFollowUpEvents = new Set([
+  "approval_required",
+  "approval_resolved",
+  "tool_result",
+]);
+
+function groupTimelineEvents(events: ConsoleEvent[]): TimelineItem[] {
+  const visibleEvents = events.filter((event) => event.event_type !== "model_output_delta");
+  const items: TimelineItem[] = [];
+  for (let index = 0; index < visibleEvents.length;) {
+    const event = visibleEvents[index];
+    const toolCalls = event.data.tool_calls;
+    if (event.event_type !== "model_response" || !Array.isArray(toolCalls) || !toolCalls.length) {
+      items.push({ kind: "event", event });
+      index += 1;
+      continue;
+    }
+
+    const groupedEvents = [event];
+    index += 1;
+    while (index < visibleEvents.length && toolFollowUpEvents.has(visibleEvents[index].event_type)) {
+      groupedEvents.push(visibleEvents[index]);
+      index += 1;
+    }
+    items.push({ kind: "tool-group", events: groupedEvents });
+  }
+  return items;
 }
 
 function NewRunDialog({
@@ -305,6 +339,91 @@ function RunSidebar({
   );
 }
 
+function TimelineEvent({
+  event,
+  selected,
+  onSelect,
+}: {
+  event: ConsoleEvent;
+  selected: boolean;
+  onSelect: (event: ConsoleEvent) => void;
+}) {
+  const presentation = eventPresentation(event);
+  const Icon = presentation.icon;
+  const content = typeof event.data.content === "string" ? event.data.content : "";
+  const result = event.data.result as { content?: string; is_error?: boolean } | undefined;
+  return (
+    <button
+      className={`timeline-entry tone-${presentation.tone} ${selected ? "selected" : ""}`}
+      onClick={() => onSelect(event)}
+    >
+      <span className="timeline-icon"><Icon size={16} /></span>
+      <span className="timeline-body">
+        <span className="timeline-heading">
+          <strong>{presentation.title}</strong>
+          <time>{formatTime(event.timestamp)}</time>
+        </span>
+        {content && <span className="timeline-preview">{content}</span>}
+        {result?.content && <span className={`timeline-preview ${result.is_error ? "error-text" : ""}`}>{result.content}</span>}
+      </span>
+    </button>
+  );
+}
+
+function ToolEventGroup({
+  events,
+  selectedEventId,
+  onSelect,
+}: {
+  events: ConsoleEvent[];
+  selectedEventId: number | null;
+  onSelect: (event: ConsoleEvent) => void;
+}) {
+  const modelEvent = events[0];
+  const toolCalls = modelEvent.data.tool_calls as Array<{ name?: string }>;
+  const resultEvents = events.filter((event) => event.event_type === "tool_result");
+  const hasError = resultEvents.some((event) => {
+    const result = event.data.result as { is_error?: boolean } | undefined;
+    return result?.is_error;
+  });
+  const approvalCount = events.filter((event) => event.event_type === "approval_required").length;
+  const resolvedCount = events.filter((event) => event.event_type === "approval_resolved").length;
+  const status = approvalCount > resolvedCount
+    ? "等待审批"
+    : hasError
+      ? "包含错误"
+      : resultEvents.length === toolCalls.length
+        ? "已完成"
+        : `完成 ${resultEvents.length}/${toolCalls.length}`;
+  const step = Number(modelEvent.data.step);
+  return (
+    <details className="tool-event-group">
+      <summary className="tool-group-summary">
+        <span className="timeline-icon"><Wrench size={16} /></span>
+        <span className="timeline-body">
+          <span className="timeline-heading">
+            <strong>第 {step} 步 · {toolCalls.length} 个工具调用</strong>
+            <time>{formatTime(modelEvent.timestamp)}</time>
+          </span>
+          <span className={`tool-group-status ${hasError ? "error-text" : ""}`}>
+            {status}<ChevronRight className="tool-group-chevron" size={14} />
+          </span>
+        </span>
+      </summary>
+      <div className="tool-group-events">
+        {events.map((event) => (
+          <TimelineEvent
+            key={event.id}
+            event={event}
+            selected={selectedEventId === event.id}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function Timeline({
   events,
   running,
@@ -316,36 +435,28 @@ function Timeline({
   selectedEventId: number | null;
   onSelect: (event: ConsoleEvent) => void;
 }) {
-  const visibleEvents = events.filter((event) => event.event_type !== "model_output_delta");
+  const timelineItems = groupTimelineEvents(events);
   const liveOutput = pendingModelOutput(events);
-  if (!visibleEvents.length && !liveOutput) {
+  if (!timelineItems.length && !liveOutput) {
     return <div className="empty-timeline"><Clock3 size={20} />等待第一个运行事件</div>;
   }
   return (
     <div className="timeline">
-      {visibleEvents.map((event) => {
-        const presentation = eventPresentation(event);
-        const Icon = presentation.icon;
-        const content = typeof event.data.content === "string" ? event.data.content : "";
-        const result = event.data.result as { content?: string; is_error?: boolean } | undefined;
-        return (
-          <button
-            key={event.id}
-            className={`timeline-entry tone-${presentation.tone} ${selectedEventId === event.id ? "selected" : ""}`}
-            onClick={() => onSelect(event)}
-          >
-            <span className="timeline-icon"><Icon size={16} /></span>
-            <span className="timeline-body">
-              <span className="timeline-heading">
-                <strong>{presentation.title}</strong>
-                <time>{formatTime(event.timestamp)}</time>
-              </span>
-              {content && <span className="timeline-preview">{content}</span>}
-              {result?.content && <span className={`timeline-preview ${result.is_error ? "error-text" : ""}`}>{result.content}</span>}
-            </span>
-          </button>
-        );
-      })}
+      {timelineItems.map((item) => item.kind === "event" ? (
+        <TimelineEvent
+          key={item.event.id}
+          event={item.event}
+          selected={selectedEventId === item.event.id}
+          onSelect={onSelect}
+        />
+      ) : (
+        <ToolEventGroup
+          key={`tool-group-${item.events[0].id}`}
+          events={item.events}
+          selectedEventId={selectedEventId}
+          onSelect={onSelect}
+        />
+      ))}
       {liveOutput && (
         <div className={`timeline-entry streaming-entry tone-model ${running ? "active" : ""}`} aria-live="polite">
           <span className="timeline-icon"><Bot size={16} /></span>
@@ -373,6 +484,18 @@ function Inspector({
   busyApproval: boolean;
   onApproval: (approved: boolean) => void;
 }) {
+  const [copiedEventId, setCopiedEventId] = useState<number | null>(null);
+
+  useEffect(() => {
+    setCopiedEventId(null);
+  }, [event?.id]);
+
+  async function copyEventData() {
+    if (!event) return;
+    await navigator.clipboard.writeText(JSON.stringify(event.data, null, 2));
+    setCopiedEventId(event.id);
+  }
+
   if (!run) {
     return <aside className="inspector"><div className="inspector-empty"><ListTree size={19} />选择一次运行</div></aside>;
   }
@@ -403,7 +526,18 @@ function Inspector({
       </section>
 
       <section className="inspector-section event-inspector">
-        <div className="inspector-section-title"><Code2 size={15} />事件详情</div>
+        <div className="inspector-section-title">
+          <Code2 size={15} />事件详情
+          {event && (
+            <button
+              className="icon-button event-copy-button"
+              onClick={() => void copyEventData()}
+              title={copiedEventId === event.id ? "已复制" : "复制事件 JSON"}
+            >
+              {copiedEventId === event.id ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+          )}
+        </div>
         {event ? (
           <>
             <div className="event-name">{event.event_type}<span>#{event.id}</span></div>

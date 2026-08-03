@@ -56,6 +56,9 @@ browser approval and streaming-output flows can be exercised. Run
 [the Chinese Web Console guide](docs/web-console.zh-CN.md) for the UI, API, lifecycle, and persistence
 details. The configured default workspace is editable for each new run.
 
+The port is not tied to the provider mode. To keep demo and real-model consoles running together,
+use different free ports, for example `8000` for `--demo` and `8001` for the `.env` model.
+
 ## Configure a model
 
 Copy the example environment file and fill in an OpenAI-compatible endpoint:
