@@ -68,6 +68,7 @@ class AgentConfig(BaseModel):
     )
     max_steps: int = Field(default=12, ge=1)
     max_total_tokens: int = Field(default=100_000, ge=1)
+    max_context_tokens: int = Field(default=32_000, ge=128)
     stop_on_tool_error: bool = False
 
 
@@ -84,10 +85,10 @@ class RunStatus(StrEnum):
 class RunResult(BaseModel):
     """Final state returned by the runtime."""
 
+    run_id: str
     status: RunStatus
     output: str = ""
     messages: list[Message]
     steps: int
     usage: TokenUsage
     error: str | None = None
-

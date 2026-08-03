@@ -40,6 +40,7 @@ async def test_runtime_completes_without_tool_call() -> None:
     result = await runtime.run("finish the task")
 
     assert result.status is RunStatus.COMPLETED
+    assert result.run_id
     assert result.output == "done"
     assert result.steps == 1
 
@@ -49,7 +50,10 @@ async def test_runtime_executes_tool_and_returns_observation_to_model() -> None:
     model = FakeModelProvider(
         [
             ModelResponse(tool_calls=[call], usage=TokenUsage(input_tokens=10, output_tokens=2)),
-            ModelResponse(content="observed hello", usage=TokenUsage(input_tokens=12, output_tokens=3)),
+            ModelResponse(
+                content="observed hello",
+                usage=TokenUsage(input_tokens=12, output_tokens=3),
+            ),
         ]
     )
     tools = StubTools()
@@ -68,7 +72,10 @@ async def test_runtime_executes_tool_and_returns_observation_to_model() -> None:
 
 
 async def test_runtime_stops_at_step_limit() -> None:
-    calls = [ToolCall(id=f"call-{index}", name="echo", arguments={"text": "again"}) for index in range(2)]
+    calls = [
+        ToolCall(id=f"call-{index}", name="echo", arguments={"text": "again"})
+        for index in range(2)
+    ]
     model = FakeModelProvider([ModelResponse(tool_calls=[call]) for call in calls])
     runtime = AgentRuntime(model, StubTools(), AgentConfig(max_steps=2))
 
@@ -91,3 +98,12 @@ async def test_runtime_stops_before_tools_when_token_limit_is_exceeded() -> None
     assert result.status is RunStatus.TOKEN_LIMIT
     assert tools.calls == []
 
+
+async def test_runtime_reports_model_errors() -> None:
+    model = FakeModelProvider([])
+    runtime = AgentRuntime(model, StubTools())
+
+    result = await runtime.run("there is no fake response")
+
+    assert result.status is RunStatus.FAILED
+    assert "no scripted response" in str(result.error)
