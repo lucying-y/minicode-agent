@@ -184,8 +184,10 @@ function NewRunDialog({
               type="number"
               min={1}
               max={100}
+              step={1}
               value={form.max_steps}
               onChange={(event) => setForm({ ...form, max_steps: Number(event.target.value) })}
+              required
             />
           </label>
           <label className="field">
@@ -193,9 +195,11 @@ function NewRunDialog({
             <input
               type="number"
               min={128}
-              step={1000}
+              max={1000000}
+              step={1}
               value={form.max_context_tokens}
               onChange={(event) => setForm({ ...form, max_context_tokens: Number(event.target.value) })}
+              required
             />
           </label>
           <label className="field">
@@ -203,9 +207,11 @@ function NewRunDialog({
             <input
               type="number"
               min={1}
-              step={1000}
+              max={10000000}
+              step={1}
               value={form.max_total_tokens}
               onChange={(event) => setForm({ ...form, max_total_tokens: Number(event.target.value) })}
+              required
             />
           </label>
         </div>
