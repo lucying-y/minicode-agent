@@ -1,5 +1,7 @@
 # MiniCode Agent
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 MiniCode Agent is a small, inspectable coding-agent runtime for repository tasks. It is an
 independent implementation focused on the engineering behind an agent: control flow, structured
 tools, context limits, permissions, provider adaptation, and execution traces.
