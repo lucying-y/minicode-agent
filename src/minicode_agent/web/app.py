@@ -39,7 +39,7 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
 
     @app.get("/api/health", response_model=HealthView)
     async def health() -> HealthView:
-        return HealthView(model=manager.model_name)
+        return HealthView(model=manager.model_name, default_workspace=str(Path.cwd()))
 
     @app.get("/api/runs", response_model=list[RunView])
     async def list_runs() -> list[RunView]:
@@ -83,7 +83,7 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
             yield ": connected\n\n"
             async for event in manager.subscribe(run_id, after=after):
                 payload = json.dumps(event, ensure_ascii=False)
-                yield f"id: {event['id']}\nevent: {event['event_type']}\ndata: {payload}\n\n"
+                yield f"id: {event['id']}\ndata: {payload}\n\n"
 
         return StreamingResponse(
             event_stream(),
@@ -115,6 +115,8 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
 
     @app.get("/{path:path}", include_in_schema=False)
     async def serve_console(path: str) -> FileResponse:
+        if path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
         if resolved_static is None or not (resolved_static / "index.html").is_file():
             raise HTTPException(
                 status_code=503,

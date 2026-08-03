@@ -69,3 +69,4 @@ class HealthView(BaseModel):
 
     status: Literal["ok"] = "ok"
     model: str
+    default_workspace: str

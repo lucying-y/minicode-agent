@@ -47,7 +47,11 @@ async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         health = await client.get("/api/health")
-        assert health.json() == {"status": "ok", "model": "fake-model"}
+        assert health.json() == {
+            "status": "ok",
+            "model": "fake-model",
+            "default_workspace": str(Path.cwd()),
+        }
 
         created = await client.post(
             "/api/runs",

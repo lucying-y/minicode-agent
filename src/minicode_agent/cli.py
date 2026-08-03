@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8000)
     web.add_argument("--web-dist", type=Path, default=Path("web/dist"))
+    web.add_argument("--demo", action="store_true", help="use a scripted model without an API key")
     return parser
 
 
@@ -215,23 +216,44 @@ async def run_evaluation_command(args: argparse.Namespace) -> int:
 
 
 async def run_web_command(args: argparse.Namespace) -> int:
-    model_configuration = _load_model_configuration()
-    if model_configuration is None:
-        return 2
-    api_key, base_url, model_name = model_configuration
-
     import uvicorn
 
     from minicode_agent.web import RunManager, create_app
 
-    manager = RunManager(
-        lambda: OpenAICompatibleProvider(
-            api_key=api_key,
-            base_url=base_url,
-            model=model_name,
-        ),
-        model_name=model_name,
-    )
+    if args.demo:
+        model_name = "scripted-demo"
+
+        def provider_factory() -> FakeModelProvider:
+            return FakeModelProvider(
+                [
+                    ModelResponse(
+                        content="I will confirm the selected workspace.",
+                        tool_calls=[
+                            ToolCall(
+                                id="web-demo-pwd",
+                                name="run_shell",
+                                arguments={"command": "pwd"},
+                            )
+                        ],
+                    ),
+                    ModelResponse(content="Demo completed after confirming the workspace."),
+                ]
+            )
+
+    else:
+        model_configuration = _load_model_configuration()
+        if model_configuration is None:
+            return 2
+        api_key, base_url, model_name = model_configuration
+
+        def provider_factory() -> OpenAICompatibleProvider:
+            return OpenAICompatibleProvider(
+                api_key=api_key,
+                base_url=base_url,
+                model=model_name,
+            )
+
+    manager = RunManager(provider_factory, model_name=model_name)
     app = create_app(manager, static_dir=args.web_dist)
     server = uvicorn.Server(
         uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
@@ -252,7 +274,11 @@ async def async_main(argv: list[str] | None = None) -> int:
 
 
 def main() -> None:
-    raise SystemExit(asyncio.run(async_main()))
+    try:
+        exit_code = asyncio.run(async_main())
+    except KeyboardInterrupt:
+        exit_code = 130
+    raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":

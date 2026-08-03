@@ -27,10 +27,11 @@ def test_parser_accepts_run_configuration() -> None:
     assert eval_args.tasks == Path("custom.json")
     assert eval_args.max_steps == 12
 
-    web_args = build_parser().parse_args(["web", "--port", "9000"])
+    web_args = build_parser().parse_args(["web", "--port", "9000", "--demo"])
     assert web_args.command == "web"
     assert web_args.port == 9000
     assert web_args.web_dist == Path("web/dist")
+    assert web_args.demo
 
 
 async def test_demo_runs_without_api_key(tmp_path: Path, capsys) -> None:
