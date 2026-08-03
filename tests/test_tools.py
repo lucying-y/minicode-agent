@@ -36,6 +36,29 @@ async def test_read_and_search_are_workspace_scoped(tmp_path: Path) -> None:
     assert "escapes workspace" in escape_result.content
 
 
+async def test_sensitive_files_are_hidden_and_blocked(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("API_KEY=replace-me\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("value = 42\n", encoding="utf-8")
+    registry = create_default_registry(tmp_path)
+
+    listed = await registry.execute(
+        ToolCall(id="1", name="list_files", arguments={"pattern": "*"})
+    )
+    secret = await registry.execute(
+        ToolCall(id="2", name="read_file", arguments={"path": ".env"})
+    )
+    template = await registry.execute(
+        ToolCall(id="3", name="read_file", arguments={"path": ".env.example"})
+    )
+
+    assert ".env" not in listed.content.splitlines()
+    assert ".env.example" in listed.content.splitlines()
+    assert secret.is_error
+    assert "sensitive path is blocked" in secret.content
+    assert not template.is_error
+
+
 async def test_edit_requires_approval_and_exact_match(tmp_path: Path) -> None:
     target = tmp_path / "app.py"
     target.write_text("answer = 41\n", encoding="utf-8")

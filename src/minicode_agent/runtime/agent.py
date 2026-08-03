@@ -58,8 +58,8 @@ class AgentRuntime:
         self.checkpoint = checkpoint or NullCheckpointStore()
         self._sequence = 0
 
-    async def run(self, task: str) -> RunResult:
-        run_id = uuid4().hex
+    async def run(self, task: str, *, run_id: str | None = None) -> RunResult:
+        run_id = run_id or uuid4().hex
         self._sequence = 0
         messages = [
             Message(role="system", content=self.config.system_prompt),

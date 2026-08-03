@@ -3,6 +3,20 @@
 import os
 from pathlib import Path
 
+_SENSITIVE_DIRECTORIES = {".git", ".ssh"}
+_SENSITIVE_FILES = {".netrc", ".npmrc", ".pypirc", "id_dsa", "id_ed25519", "id_rsa"}
+_SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template"}
+
+
+def is_sensitive_path(path: Path) -> bool:
+    """Return whether a workspace-relative path commonly contains credentials."""
+    for part in path.parts:
+        if part in _SENSITIVE_DIRECTORIES or part in _SENSITIVE_FILES:
+            return True
+        if part.startswith(".env") and part not in _SAFE_ENV_TEMPLATES:
+            return True
+    return False
+
 
 class WorkspaceViolation(ValueError):
     """Raised when a path escapes the configured workspace."""
@@ -25,10 +39,11 @@ class Workspace:
 
         if os.path.commonpath((self.root, candidate)) != str(self.root):
             raise WorkspaceViolation(f"path escapes workspace: {path}")
+        if is_sensitive_path(candidate.relative_to(self.root)):
+            raise WorkspaceViolation(f"sensitive path is blocked: {path}")
         if must_exist and not candidate.exists():
             raise FileNotFoundError(path)
         return candidate
 
     def relative(self, path: Path) -> str:
         return path.relative_to(self.root).as_posix()
-

@@ -45,6 +45,14 @@ async def test_runtime_completes_without_tool_call() -> None:
     assert result.steps == 1
 
 
+async def test_runtime_accepts_preallocated_run_id() -> None:
+    runtime = AgentRuntime(FakeModelProvider([ModelResponse(content="done")]), StubTools())
+
+    result = await runtime.run("finish the task", run_id="web-run-1")
+
+    assert result.run_id == "web-run-1"
+
+
 async def test_runtime_executes_tool_and_returns_observation_to_model() -> None:
     call = ToolCall(id="call-1", name="echo", arguments={"text": "hello"})
     model = FakeModelProvider(

@@ -6,14 +6,14 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from minicode_agent.runtime.types import ToolResult
-from minicode_agent.security import PermissionLevel, Workspace
+from minicode_agent.security import PermissionLevel, Workspace, is_sensitive_path
 from minicode_agent.tools.base import Tool
 
 _IGNORED_PARTS = {".git", ".minicode", ".venv", "__pycache__", "node_modules"}
 
 
 def _is_ignored(path: Path) -> bool:
-    return any(part in _IGNORED_PARTS for part in path.parts)
+    return any(part in _IGNORED_PARTS for part in path.parts) or is_sensitive_path(path)
 
 
 class ReadFileInput(BaseModel):
@@ -157,4 +157,3 @@ class EditFileTool(Tool[EditFileInput]):
             raise ValueError(f"old_text must match exactly once; found {occurrences} matches")
         path.write_text(content.replace(data.old_text, data.new_text), encoding="utf-8")
         return ToolResult(content=f"edited {workspace.relative(path)}")
-

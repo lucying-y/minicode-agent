@@ -107,7 +107,7 @@ async def run_demo(workspace: Path) -> int:
 
 
 def _load_model_configuration() -> tuple[str, str, str] | None:
-    load_dotenv()
+    load_dotenv(dotenv_path=Path.cwd() / ".env")
     api_key = os.getenv("MINICODE_API_KEY", "")
     base_url = os.getenv("MINICODE_BASE_URL", "").strip()
     model_name = os.getenv("MINICODE_MODEL", "").strip()
