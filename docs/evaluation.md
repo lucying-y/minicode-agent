@@ -32,6 +32,18 @@ making the correct edit, or fail despite the model claiming completion.
 Run the same task-suite version when comparing prompts, models, or Runtime changes. Preserve the raw
 reports used for resume numbers.
 
+## Baseline results
+
+The first preserved real-model baseline used `gpt-5.6-sol` with task-suite version 1 on 2026-08-03.
+It passed 3/3 tasks, used 15 model steps and 18,415 total Tokens, and took 106.14 seconds end to end.
+All three Runtime runs reached `completed`, and all three deterministic verifiers exited with code
+0. See [`../benchmarks/gpt-5.6-sol-baseline-20260803.json`](../benchmarks/gpt-5.6-sol-baseline-20260803.json)
+for the per-task results.
+
+The suite contains three focused fixture tasks: fixing an arithmetic implementation, implementing a
+slugification helper, and repairing nested configuration lookup. These numbers establish a
+repeatable local regression baseline only; they are not comparable to SWE-bench scores.
+
 ## Trust boundary
 
 Verification commands and model-generated shell commands execute with the current user's OS

@@ -18,9 +18,14 @@ Only claim behavior that is present in the repository and backed by tests or an 
   to test the complete runtime without external API dependencies.
 - Built a repeatable repository-task evaluator that creates isolated fixtures, verifies final code
   with executable acceptance checks, and reports success rate, steps, Token usage, and latency.
+- Connected the real OpenAI-compatible provider and passed 3/3 tasks in the self-authored version 1
+  suite with `gpt-5.6-sol`: 5 average model steps, 18,415 total Tokens, and 106.14 seconds end to end.
+- Maintained 28 automated tests with 93.97% statement coverage; passed Ruff checks and built both
+  wheel and source distributions with `uv build`.
 
-Add benchmark numbers only after running `minicode eval` with a real model and preserving its
-`report.json`. Do not reuse scores from reference projects.
+The preserved baseline is in `benchmarks/gpt-5.6-sol-baseline-20260803.json`. Describe it as a
+"self-authored three-task code-repair suite" rather than a public benchmark. Do not reuse scores
+from reference projects.
 
 ## Likely interview questions
 

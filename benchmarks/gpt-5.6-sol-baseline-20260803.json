@@ -1,0 +1,45 @@
+{
+  "model": "gpt-5.6-sol",
+  "suite_version": 1,
+  "started_at": "2026-08-03T07:32:35.651418+00:00",
+  "finished_at": "2026-08-03T07:34:21.793137+00:00",
+  "total_tasks": 3,
+  "passed_tasks": 3,
+  "success_rate": 1.0,
+  "total_steps": 15,
+  "total_input_tokens": 16113,
+  "total_output_tokens": 2302,
+  "total_duration_ms": 106137.053,
+  "results": [
+    {
+      "task_id": "fix-addition",
+      "runtime_status": "completed",
+      "passed": true,
+      "steps": 5,
+      "input_tokens": 4161,
+      "output_tokens": 263,
+      "duration_ms": 20539.843,
+      "verify_exit_code": 0
+    },
+    {
+      "task_id": "implement-slugify",
+      "runtime_status": "completed",
+      "passed": true,
+      "steps": 5,
+      "input_tokens": 6200,
+      "output_tokens": 1537,
+      "duration_ms": 59522.18,
+      "verify_exit_code": 0
+    },
+    {
+      "task_id": "repair-config-lookup",
+      "runtime_status": "completed",
+      "passed": true,
+      "steps": 5,
+      "input_tokens": 5752,
+      "output_tokens": 502,
+      "duration_ms": 26075.03,
+      "verify_exit_code": 0
+    }
+  ]
+}

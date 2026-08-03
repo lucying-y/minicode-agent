@@ -90,6 +90,20 @@ Success is determined by each task's verification command rather than the model'
 non-perfect suite exits with status 1. Evaluation files can contain executable verification commands;
 only run task suites you trust, preferably inside a disposable container.
 
+### Verified baseline
+
+On 2026-08-03, `gpt-5.6-sol` passed all 3 bundled repository tasks through the real provider path:
+
+| Result | Average steps | Total Tokens | Total duration |
+| --- | ---: | ---: | ---: |
+| 3/3 verified | 5 | 18,415 | 106.14s |
+
+Every run reached `completed`, and every independent verifier exited with code 0. The raw aggregate
+and per-task metrics are preserved in
+[`benchmarks/gpt-5.6-sol-baseline-20260803.json`](benchmarks/gpt-5.6-sol-baseline-20260803.json).
+This is a small, self-authored regression suite, not a claim about performance on SWE-bench or other
+public benchmarks.
+
 ## Execution flow
 
 ```text
