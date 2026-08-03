@@ -12,6 +12,10 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)，但不依赖或复制现有 Agent
 框架。
 
+第一次接触 Agent 的读者，建议先阅读
+[《代码设计与技术细节》](docs/code-design.zh-CN.md)。该文档从基础概念开始，详细解释一次任务的
+执行流程、模型与工具协议、上下文、权限、Trace、Checkpoint、评测以及当前安全边界。
+
 ## 当前能力
 
 - 实现有界的模型-工具执行循环，支持最大步数、Token 总量和上下文预算限制。
