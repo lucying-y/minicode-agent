@@ -35,6 +35,7 @@ class ToolRegistry:
 
     async def execute(self, call: ToolCall) -> ToolResult:
         started = perf_counter()
+        execution_started: float | None = None
         tool = self._tools.get(call.name)
         if tool is None:
             return ToolResult(content=f"unknown tool: {call.name}", is_error=True)
@@ -42,13 +43,19 @@ class ToolRegistry:
         try:
             data = tool.input_model.model_validate(call.arguments)
             await self.policy.authorize(call, tool.permission)
+            execution_started = perf_counter()
             result = await tool.run(data, self.workspace)
         except ValidationError as exc:
             result = ToolResult(content=f"invalid arguments: {exc}", is_error=True)
         except (OSError, PermissionDenied, ValueError) as exc:
             result = ToolResult(content=f"{type(exc).__name__}: {exc}", is_error=True)
 
-        result.metadata["duration_ms"] = round((perf_counter() - started) * 1000, 3)
+        finished = perf_counter()
+        result.metadata["duration_ms"] = round(
+            (finished - (execution_started or started)) * 1000,
+            3,
+        )
+        if execution_started is not None:
+            result.metadata["authorization_ms"] = round((execution_started - started) * 1000, 3)
         result.metadata["tool"] = call.name
         return result
-

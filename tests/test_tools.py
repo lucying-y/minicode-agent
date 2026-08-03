@@ -90,6 +90,30 @@ async def test_edit_requires_approval_and_exact_match(tmp_path: Path) -> None:
     assert approver.requests[0][1] is PermissionLevel.WRITE
 
 
+async def test_tool_metrics_separate_authorization_and_execution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    registry = create_default_registry(tmp_path, PermissionPolicy(StaticApprover(True)))
+    timestamps = iter([1.0, 3.0, 3.25])
+    monkeypatch.setattr(
+        "minicode_agent.tools.registry.perf_counter",
+        lambda: next(timestamps),
+    )
+
+    result = await registry.execute(
+        ToolCall(
+            id="metrics",
+            name="edit_file",
+            arguments={"path": "app.py", "old_text": "1", "new_text": "2"},
+        )
+    )
+
+    assert result.metadata["authorization_ms"] == 2000.0
+    assert result.metadata["duration_ms"] == 250.0
+
+
 async def test_shell_requires_approval_and_blocks_high_risk_commands(tmp_path: Path) -> None:
     approver = StaticApprover(True)
     registry = create_default_registry(tmp_path, PermissionPolicy(approver))
