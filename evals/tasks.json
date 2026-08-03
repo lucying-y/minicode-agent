@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "fix-addition",
+      "prompt": "Fix the implementation in calculator.py so all unit tests pass. Inspect the repository, make the smallest correct edit, and run the tests.",
+      "files": {
+        "calculator.py": "def add(left: int, right: int) -> int:\n    return left - right\n",
+        "test_calculator.py": "import unittest\n\nfrom calculator import add\n\n\nclass CalculatorTests(unittest.TestCase):\n    def test_positive_numbers(self):\n        self.assertEqual(add(2, 3), 5)\n\n    def test_negative_number(self):\n        self.assertEqual(add(-2, 3), 1)\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+      },
+      "verify_command": "python3 -m unittest -q"
+    },
+    {
+      "id": "implement-slugify",
+      "prompt": "Implement slugify in text_utils.py. Preserve the existing public function and make all tests pass. Verify the result before finishing.",
+      "files": {
+        "text_utils.py": "def slugify(value: str) -> str:\n    raise NotImplementedError\n",
+        "test_text_utils.py": "import unittest\n\nfrom text_utils import slugify\n\n\nclass SlugifyTests(unittest.TestCase):\n    def test_spaces_and_case(self):\n        self.assertEqual(slugify('Hello World'), 'hello-world')\n\n    def test_repeated_separators(self):\n        self.assertEqual(slugify('Agent  Runtime__Demo'), 'agent-runtime-demo')\n\n    def test_edges(self):\n        self.assertEqual(slugify('  Mini Code!  '), 'mini-code')\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+      },
+      "verify_command": "python3 -m unittest -q"
+    },
+    {
+      "id": "repair-config-lookup",
+      "prompt": "Repair get_setting in config.py so nested dotted keys work and a missing key returns the provided default. Keep the implementation focused and run the tests.",
+      "files": {
+        "config.py": "from typing import Any\n\n\ndef get_setting(config: dict[str, Any], key: str, default: Any = None) -> Any:\n    return config.get(key, default)\n",
+        "test_config.py": "import unittest\n\nfrom config import get_setting\n\n\nclass ConfigTests(unittest.TestCase):\n    def setUp(self):\n        self.config = {'model': {'name': 'demo', 'limits': {'steps': 8}}}\n\n    def test_nested_value(self):\n        self.assertEqual(get_setting(self.config, 'model.name'), 'demo')\n\n    def test_deep_value(self):\n        self.assertEqual(get_setting(self.config, 'model.limits.steps'), 8)\n\n    def test_missing_value(self):\n        self.assertEqual(get_setting(self.config, 'model.unknown', 'fallback'), 'fallback')\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+      },
+      "verify_command": "python3 -m unittest -q"
+    }
+  ]
+}
