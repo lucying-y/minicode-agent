@@ -5,11 +5,18 @@ from typing import Protocol
 from uuid import uuid4
 
 from minicode_agent.models.base import ModelProvider
-from minicode_agent.persistence import NullTraceSink, TraceEvent, TraceSink
+from minicode_agent.persistence import (
+    CheckpointStore,
+    NullCheckpointStore,
+    NullTraceSink,
+    TraceEvent,
+    TraceSink,
+)
 from minicode_agent.runtime.context import ContextManager
 from minicode_agent.runtime.types import (
     AgentConfig,
     Message,
+    RunCheckpoint,
     RunResult,
     RunStatus,
     TokenUsage,
@@ -41,12 +48,14 @@ class AgentRuntime:
         config: AgentConfig | None = None,
         context: ContextManager | None = None,
         trace: TraceSink | None = None,
+        checkpoint: CheckpointStore | None = None,
     ) -> None:
         self.model = model
         self.tools = tools
         self.config = config or AgentConfig()
         self.context = context or ContextManager(self.config.max_context_tokens)
         self.trace = trace or NullTraceSink()
+        self.checkpoint = checkpoint or NullCheckpointStore()
         self._sequence = 0
 
     async def run(self, task: str) -> RunResult:
@@ -58,8 +67,50 @@ class AgentRuntime:
         ]
         usage = TokenUsage()
         self._emit(run_id, "run_started", {"task": task, "config": self.config.model_dump()})
+        self._save_checkpoint(run_id, task, "running", messages, 0, usage)
+        return await self._continue(run_id, task, messages, usage, start_step=1)
 
-        for step in range(1, self.config.max_steps + 1):
+    async def resume(self, run_id: str) -> RunResult:
+        """Continue a non-completed run from its last consistent checkpoint."""
+        checkpoint = self.checkpoint.load(run_id)
+        if checkpoint is None:
+            raise ValueError(f"checkpoint not found: {run_id}")
+        if checkpoint.status == RunStatus.COMPLETED.value:
+            raise ValueError(f"run is already completed: {run_id}")
+
+        self._sequence = checkpoint.trace_sequence
+        self._emit(
+            run_id,
+            "run_resumed",
+            {"from_status": checkpoint.status, "completed_steps": checkpoint.steps},
+        )
+        self._save_checkpoint(
+            run_id,
+            checkpoint.task,
+            "running",
+            checkpoint.messages,
+            checkpoint.steps,
+            checkpoint.usage,
+        )
+        return await self._continue(
+            run_id,
+            checkpoint.task,
+            list(checkpoint.messages),
+            checkpoint.usage.model_copy(deep=True),
+            start_step=checkpoint.steps + 1,
+        )
+
+    async def _continue(
+        self,
+        run_id: str,
+        task: str,
+        messages: list[Message],
+        usage: TokenUsage,
+        *,
+        start_step: int,
+    ) -> RunResult:
+
+        for step in range(start_step, self.config.max_steps + 1):
             try:
                 model_messages = self.context.prepare(messages)
                 response = await self.model.complete(model_messages, self.tools.schemas())
@@ -67,7 +118,7 @@ class AgentRuntime:
                 error = f"{type(exc).__name__}: {exc}"
                 self._emit(run_id, "model_error", {"step": step, "error": error})
                 return self._finish(
-                    run_id, RunStatus.FAILED, messages, step, usage, error=error
+                    run_id, task, RunStatus.FAILED, messages, step, usage, error=error
                 )
 
             usage.input_tokens += response.usage.input_tokens
@@ -94,6 +145,7 @@ class AgentRuntime:
             if usage.total_tokens > self.config.max_total_tokens:
                 return self._finish(
                     run_id,
+                    task,
                     RunStatus.TOKEN_LIMIT,
                     messages,
                     step,
@@ -104,6 +156,7 @@ class AgentRuntime:
             if not response.tool_calls:
                 return self._finish(
                     run_id,
+                    task,
                     RunStatus.COMPLETED,
                     messages,
                     step,
@@ -133,6 +186,7 @@ class AgentRuntime:
                 if result.is_error and self.config.stop_on_tool_error:
                     return self._finish(
                         run_id,
+                        task,
                         RunStatus.TOOL_ERROR,
                         messages,
                         step,
@@ -140,11 +194,14 @@ class AgentRuntime:
                         output=result.content,
                     )
 
+            self._save_checkpoint(run_id, task, "running", messages, step, usage)
+
         return self._finish(
             run_id,
+            task,
             RunStatus.STEP_LIMIT,
             messages,
-            self.config.max_steps,
+            max(start_step - 1, self.config.max_steps),
             usage,
         )
 
@@ -157,6 +214,7 @@ class AgentRuntime:
     def _finish(
         self,
         run_id: str,
+        task: str,
         status: RunStatus,
         messages: list[Message],
         steps: int,
@@ -184,7 +242,43 @@ class AgentRuntime:
                 "error": error,
             },
         )
+        self._save_checkpoint(
+            run_id,
+            task,
+            status.value,
+            messages,
+            steps,
+            usage,
+            output=output,
+            error=error,
+        )
         return result
+
+    def _save_checkpoint(
+        self,
+        run_id: str,
+        task: str,
+        status: str,
+        messages: list[Message],
+        steps: int,
+        usage: TokenUsage,
+        *,
+        output: str = "",
+        error: str | None = None,
+    ) -> None:
+        self.checkpoint.save(
+            RunCheckpoint(
+                run_id=run_id,
+                task=task,
+                status=status,
+                messages=messages,
+                steps=steps,
+                usage=usage,
+                trace_sequence=self._sequence,
+                output=output,
+                error=error,
+            )
+        )
 
     def _emit(self, run_id: str, event_type: str, data: dict) -> None:
         self._sequence += 1

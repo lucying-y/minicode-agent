@@ -92,3 +92,17 @@ class RunResult(BaseModel):
     steps: int
     usage: TokenUsage
     error: str | None = None
+
+
+class RunCheckpoint(BaseModel):
+    """Serializable state from the last consistent point in a run."""
+
+    run_id: str
+    task: str
+    status: str
+    messages: list[Message]
+    steps: int
+    usage: TokenUsage
+    trace_sequence: int
+    output: str = ""
+    error: str | None = None
