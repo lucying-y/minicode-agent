@@ -1,3 +1,5 @@
+import pytest
+
 from minicode_agent.runtime import Message, ToolCall
 from minicode_agent.runtime.context import ContextManager
 
@@ -7,6 +9,11 @@ def test_context_keeps_full_history_when_under_budget() -> None:
     manager = ContextManager(max_tokens=128)
 
     assert manager.prepare(messages) == messages
+
+
+def test_context_rejects_unusable_budget() -> None:
+    with pytest.raises(ValueError, match="at least 128"):
+        ContextManager(max_tokens=127)
 
 
 def test_context_drops_old_complete_blocks_and_keeps_latest_block() -> None:
@@ -34,4 +41,3 @@ def test_context_drops_old_complete_blocks_and_keeps_latest_block() -> None:
     assert any("omitted" in message.content for message in prepared)
     assert prepared[-2:] == messages[-2:]
     assert all(message.tool_call_id != "old" for message in prepared)
-

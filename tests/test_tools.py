@@ -98,3 +98,50 @@ async def test_registry_returns_structured_errors(tmp_path: Path) -> None:
     assert invalid.is_error
     assert invalid.metadata["tool"] == "read_file"
 
+
+async def test_list_ignores_dependency_directories_and_edit_can_create(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('app')\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "ignored.py").write_text("ignored\n", encoding="utf-8")
+    approver = StaticApprover(True)
+    registry = create_default_registry(tmp_path, PermissionPolicy(approver))
+
+    listed = await registry.execute(
+        ToolCall(id="1", name="list_files", arguments={"pattern": "*.py"})
+    )
+    created = await registry.execute(
+        ToolCall(
+            id="2",
+            name="edit_file",
+            arguments={"path": "src/new.py", "old_text": "", "new_text": "value = 1\n"},
+        )
+    )
+
+    assert listed.content == "src/app.py"
+    assert not created.is_error
+    assert (tmp_path / "src" / "new.py").read_text(encoding="utf-8") == "value = 1\n"
+
+
+async def test_shell_reports_failure_and_timeout(tmp_path: Path) -> None:
+    registry = create_default_registry(tmp_path, PermissionPolicy(StaticApprover(True)))
+
+    failed = await registry.execute(
+        ToolCall(id="1", name="run_shell", arguments={"command": "printf 'bad'; exit 3"})
+    )
+    timed_out = await registry.execute(
+        ToolCall(
+            id="2",
+            name="run_shell",
+            arguments={
+                "command": "python3 -c 'import time; time.sleep(2)'",
+                "timeout_seconds": 1,
+            },
+        )
+    )
+
+    assert failed.is_error
+    assert failed.content == "bad"
+    assert failed.metadata["exit_code"] == 3
+    assert timed_out.is_error
+    assert timed_out.metadata["timed_out"] is True

@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from minicode_agent.cli import async_main, build_parser
+from minicode_agent.cli import AlwaysApprover, ConsoleApprover, async_main, build_parser
+from minicode_agent.runtime import ToolCall
+from minicode_agent.security import PermissionLevel
 
 
 def test_parser_accepts_run_configuration() -> None:
@@ -24,3 +26,23 @@ async def test_demo_runs_without_api_key(tmp_path: Path, capsys) -> None:
     assert "Demo completed after reading README.md." in output
     assert (tmp_path / ".minicode" / "traces.jsonl").exists()
 
+
+async def test_run_reports_missing_environment_configuration(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in ("MINICODE_API_KEY", "MINICODE_BASE_URL", "MINICODE_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
+    exit_code = await async_main(["run", "inspect", "--workspace", str(tmp_path)])
+
+    assert exit_code == 2
+    assert "Copy .env.example to .env" in capsys.readouterr().out
+
+
+async def test_console_and_always_approvers(monkeypatch) -> None:
+    call = ToolCall(id="1", name="edit_file", arguments={"path": "app.py"})
+    monkeypatch.setattr("builtins.input", lambda prompt: "yes")
+
+    assert await ConsoleApprover().approve(call, PermissionLevel.WRITE)
+    assert await AlwaysApprover().approve(call, PermissionLevel.EXECUTE)

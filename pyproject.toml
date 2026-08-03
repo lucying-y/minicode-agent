@@ -37,3 +37,10 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.coverage.run]
+source = ["minicode_agent"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
