@@ -113,6 +113,8 @@ flowchart TD
     Policy --> Tools["Workspace Tools"]
     Runtime --> Trace["JSONL TraceSink"]
     Runtime --> Checkpoint["SQLite CheckpointStore"]
+    CLI --> RunStore["SQLite Run Store"]
+    Manager <--> RunStore
 ```
 
 各模块只承担一类职责：
@@ -124,7 +126,7 @@ flowchart TD
 - `security`：限制工作区路径，决定工具是否需要审批或必须拒绝；
 - `persistence`：记录事件和保存恢复快照；
 - `evaluation`：在独立目录运行固定任务，并用外部命令验收；
-- `web`：提供 API、进程内运行管理、SSE 转发和异步网页审批；
+- `web`：提供 API、持久化运行查询、SSE 轮询和异步网页审批；
 - `web/` 前端目录：提供 React 运行列表、时间线、事件详情和审批界面。
 
 这种拆分有两个直接好处：
@@ -156,7 +158,8 @@ src/minicode_agent/
 │   └── policy.py                  # 权限分级、审批和高风险命令拒绝
 ├── persistence/
 │   ├── trace.py                   # JSONL 事件轨迹
-│   └── checkpoint.py              # SQLite 状态快照
+│   ├── checkpoint.py              # SQLite 状态快照
+│   └── run_store.py               # CLI/Web 共用的 SQLite 运行时间线
 ├── evaluation/
 │   ├── models.py                  # 评测任务和报告 Schema
 │   └── runner.py                  # 隔离任务、执行、校验、报告
@@ -578,6 +581,28 @@ JSONL 表示每一行都是一个完整 JSON 对象。追加写入比维护一�
 
 Trace 适合回答“模型为什么这么做”和“哪一步失败”，但它不是恢复来源，也不会自动重新驱动任务。
 
+### 11.1 Run Store：用于 CLI/Web 共用时间线
+
+CLI 和 Web 都会在目标工作区写入：
+
+```text
+.minicode/runs.db
+```
+
+这个 SQLite 数据库包含两张核心表：
+
+- `runs`：保存任务、来源、模型、配置、状态、Token、结果和事件数量等摘要；
+- `events`：以 `(run_id, id)` 为主键保存该任务按顺序增长的界面事件。
+
+`PersistentRunRecorder` 把每个 Runtime Trace 同时写入 JSONL 和 Run Store。模型流式文本不进入
+JSONL，但会按时间或字符数合并成较大的 `model_output_delta` 后写入 Run Store，从而兼顾实时性和
+SQLite 写入频率。不同进程使用 WAL 和 `BEGIN IMMEDIATE` 分配事件序号，因此 CLI 写入后，Web
+通过新的数据库连接就能读取，不需要把 CLI 请求转发给 Web。
+
+Run Store 是观察层，不是执行控制层。Web 只在内存中保留自己启动的后台任务与审批 Future；它
+看到 `source=cli` 的运行时，只展示摘要和时间线，不允许网页审批或恢复。这个边界避免 Web 在没有
+CLI 执行上下文的情况下假装接管任务。
+
 ## 12. Checkpoint：用于恢复任务
 
 Checkpoint 默认写入：
@@ -612,19 +637,20 @@ Checkpoint 保存的是应用层一致边界，但仍有一个重要限制：如
 Checkpoint 尚未保存时崩溃，磁盘副作用已经发生，恢复后模型可能再次请求类似操作。未来可通过
 Git worktree、幂等工具或工具级事务记录降低这一风险。
 
-## 13. Trace 与 Checkpoint 为什么要分开
+## 13. Trace、Run Store 与 Checkpoint 为什么要分开
 
-两者解决的问题不同：
+三者解决的问题不同：
 
-| 对比项 | Trace | Checkpoint |
-| --- | --- | --- |
-| 目的 | 审计和排查过程 | 恢复运行状态 |
-| 数据形式 | 多条只追加事件 | 每个任务一份最新快照 |
-| 是否保留历史变化 | 是 | 否，只保留最新状态 |
-| 主要查询方式 | 按 `run_id` 和序号查看 | 按 `run_id` 读取 |
+| 对比项 | Trace | Run Store | Checkpoint |
+| --- | --- | --- | --- |
+| 目的 | 人类审计和排查 | CLI/Web 列表与时间线 | 恢复运行状态 |
+| 数据形式 | JSONL 只追加事件 | SQLite 摘要与有序事件 | 每个任务一份最新快照 |
+| 是否保留界面事件 | 只保留 Runtime Trace | 是，包括流式和审批事件 | 否 |
+| 主要查询方式 | 按行或 `run_id` 分析 | 按工作区、`run_id`、事件 ID 查询 | 按 `run_id` 读取 |
 
-只使用 Trace，恢复时需要重放事件并处理各种不完整情况；只使用 Checkpoint，则无法看到状态为何
-变化。两个存储保持各自简单，比让一个格式承担所有职责更容易理解和测试。
+只使用 Trace，Web 每次查询都要扫描文件且难以可靠地跨进程续订；只使用 Run Store，恢复所需的
+完整消息状态会让观察表过度复杂；只使用 Checkpoint，则看不到状态为何变化。三个存储分别承担
+审计、观察和恢复，比让一个格式承担所有职责更容易理解和测试。
 
 ## 14. 评测系统
 
@@ -657,13 +683,14 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 
 ## 15. 测试策略
 
-项目当前有 33 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
+项目当前有 41 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
 
 - Agent Runtime：使用 Fake Provider 和 Stub Tool；
 - HTTP Provider：使用 `httpx.MockTransport`，不发送真实请求；
 - 文件与 Shell：使用 Pytest 临时目录；
 - 审批：使用固定返回允许或拒绝的 Approver；
 - Checkpoint：使用临时 SQLite 文件；
+- Run Store：验证跨连接可见性、事件排序、摘要投影和流式分片合并；
 - CLI：调用命令入口并检查输出与退出码；
 - Evaluation：使用临时题目和确定性校验命令；
 - Web API：使用进程内 ASGI 客户端验证创建、审批、事件、停止限制和恢复。
@@ -735,7 +762,7 @@ uv run pytest --cov
 2. 上下文按字符数估算 Token，没有模型专用 Tokenizer，也没有历史摘要；
 3. Trace 没有通用的秘密信息内容脱敏；
 4. Shell 在宿主机运行，拒绝列表不能替代 Docker 沙箱；
-5. Web 运行摘要和事件缓冲只在当前进程内，重启后不会从持久化数据重建列表；
+5. Web 只自动发现默认工作区和本进程已注册工作区，旧 JSONL 不会自动回填共享列表；
 6. 没有主动取消、跨进程任务队列、多用户认证、Git Diff 和测试结果专用视图；
 7. Checkpoint 不能为未记录的文件副作用提供事务回滚；
 8. 文件工具只处理 UTF-8 文本，`edit_file` 只支持唯一精确替换；
@@ -753,29 +780,30 @@ flowchart LR
     React["React Web Console"] --> API["FastAPI REST API"]
     API --> Manager["后台 Run Manager"]
     Manager --> Runtime["现有 AgentRuntime"]
-    Runtime --> Events["事件总线"]
-    Events --> SSE["SSE 实时流"]
+    Runtime --> Recorder["PersistentRunRecorder"]
+    Recorder --> Store["SQLite Run Store"]
+    CLI["另一个 CLI 进程"] --> Store
+    Store --> SSE["250 ms 轮询 + SSE"]
     SSE --> React
     React --> Approval["批准 / 拒绝工具"]
     Approval --> Manager
 ```
 
 `RunManager` 为每个任务预分配 `run_id`，在后台 `asyncio.Task` 中运行 `AgentRuntime`。
-`_ForwardingTraceSink` 一边把 Runtime 事件追加到 JSONL，一边转发到进程内事件缓冲和 SSE
-订阅者。`_WebApprover` 使用 `asyncio.Future` 等待浏览器的批准或拒绝，等待期间不会阻塞其他
-HTTP 请求。
+`PersistentRunRecorder` 一边把 Runtime 事件追加到 JSONL，一边写入工作区的 `runs.db`。
+`_WebApprover` 使用 `asyncio.Future` 等待浏览器的批准或拒绝，等待期间不会阻塞其他 HTTP 请求。
 
-React 前端通过 REST 创建、查询、审批和恢复任务，通过 SSE 接收增量事件。它展示运行历史、状态、
-指标、执行时间线和原始事件 JSON。服务重启后 Web 列表会清空，但各工作区中的 JSONL Trace 和
-SQLite Checkpoint 仍然存在。
+React 前端通过 REST 创建、查询、审批和恢复 Web 任务，通过 SSE 接收增量事件。它展示 CLI/Web
+来源、模型、状态、指标、执行时间线和原始事件 JSON。SSE 从 Run Store 按事件 ID 轮询，因此同一
+工作区中另一个 CLI 进程产生的新事件也会出现。CLI 运行在网页中只读，审批和恢复仍由 CLI 负责。
 
 模型文本分片作为 `model_output_delta` Web 事件实时发送，React 按模型步数合并为一个持续增长的
-输出区域，避免每个分片占据一条时间线记录。高频分片不写入持久化 Trace；最终完整
-`model_response` 到达后替换临时输出，并按原有流程持久化。
+输出区域，避免每个分片占据一条时间线记录。高频分片经批量合并后写入 Run Store，但不写入
+JSONL Trace；最终完整 `model_response` 到达后替换临时输出，并按原有流程持久化。
 
 当前 API 路径、运行时序、持久化边界和界面操作详见
-[《Web Console 使用与设计说明》](web-console.zh-CN.md)。下一阶段应补充任务取消、从持久化数据
-重建列表、Git Diff、测试结果视图和 Docker 隔离。
+[《Web Console 使用与设计说明》](web-console.zh-CN.md)。下一阶段应补充任务取消、跨工作区索引、
+Git Diff、测试结果视图和 Docker 隔离。
 
 ## 19. 推荐源码阅读顺序
 

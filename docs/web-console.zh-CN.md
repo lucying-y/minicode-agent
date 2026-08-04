@@ -16,6 +16,7 @@ Agent Loop 的前提下，补上了以下交互：
 - 实时拼接并显示模型返回的文本分片；
 - 查看单个事件的原始 JSON 数据；
 - 恢复因步数、Token、工具或模型错误而停止的任务；
+- 查看同一工作区中由 CLI 进程写入的运行时间线；
 - 在桌面和移动端使用同一套界面。
 
 Web Console 是本地开发工具，不是面向公网的多用户服务。
@@ -90,6 +91,9 @@ uv run minicode web \
 临时切换到另一个现有目录。默认只监听本机回环地址。除非已经增加认证、网络隔离和操作系统级
 沙箱，否则不要监听公网地址。
 
+Web 只会自动发现这个默认工作区中的 CLI 记录。要让 CLI 时间线出现在页面中，两边必须传入同一
+个 `--workspace`。服务运行期间从网页使用过的其他工作区也会加入本进程的可查询范围。
+
 ### 2.5 同时运行演示和真实模型
 
 端口与模型模式没有固定绑定，默认端口都是 `8000`。同时运行两个服务时需要显式选择不同的空闲
@@ -110,7 +114,8 @@ uv run minicode web --port 8001 --workspace /path/to/repository
 
 页面分为三个工作区：
 
-1. 左侧运行列表：按创建时间展示当前服务进程中的任务，可按任务文本或工作区搜索；
+1. 左侧运行列表：展示工作区中持久化的 CLI/Web 任务，每 2 秒刷新一次，可按任务、工作区、来源或
+   模型搜索；
 2. 中间运行区：显示任务状态、步数、Token、事件数量和实时执行时间线；
 3. 右侧检查区：显示运行配置、待审批操作和选中事件的完整 JSON。
 
@@ -125,8 +130,9 @@ uv run minicode web --port 8001 --workspace /path/to/repository
 | 上下文 Token | 32,000 | 128 到 1,000,000 | 单次模型请求可见历史的估算预算 |
 | 总 Token | 100,000 | 1 到 10,000,000 | 整个运行累计模型 Token 上限 |
 
-工作区必须是服务所在机器上的现有目录。服务会在该目录下创建 `.minicode/` 保存 Trace 和
-Checkpoint。
+工作区必须是服务所在机器上的现有目录。服务会在该目录下创建 `.minicode/` 保存共享时间线、
+Trace 和 Checkpoint。来源徽标会标明任务由 `CLI` 还是 `WEB` 发起；CLI 任务只用于观察，不能
+从网页审批或恢复。CLI 等待审批时，页面会提示回到原终端处理。
 
 移动端会把运行列表变成侧边抽屉，并在待审批时把审批面板固定在视口底部，避免必须滚动到页面
 末尾才能批准操作。
@@ -135,9 +141,11 @@ Checkpoint。
 
 ```mermaid
 flowchart LR
+    CLI["CLI"] --> Store["SQLite Run Store"]
     Browser["React Web Console"] -->|"REST"| API["FastAPI"]
     Browser <-->|"SSE"| API
     API --> Manager["RunManager"]
+    Manager <--> Store
     Manager --> Runtime["AgentRuntime"]
     Runtime --> Provider["ModelProvider"]
     Runtime --> Registry["ToolRegistry"]
@@ -160,8 +168,8 @@ Web 层只负责创建后台任务、转发事件、等待审批结果和把状�
   -> Provider 解析文本和工具调用分片
   -> model_output_delta 经 SSE 增量显示在浏览器
   -> Provider 组装最终 ModelResponse
-  -> Trace 同时写入 JSONL 并转发给 RunManager
-  -> SSE 把新事件发送到浏览器
+  -> Recorder 同时写入 JSONL Trace 和 SQLite Run Store
+  -> SSE 轮询 Run Store 并把新事件发送到浏览器
   -> 有副作用的工具进入 waiting_approval
   -> 浏览器提交批准或拒绝
   -> Runtime 继续执行工具和下一轮模型
@@ -171,11 +179,12 @@ Web 层只负责创建后台任务、转发事件、等待审批结果和把状�
 每条运行有两个事件序号：
 
 - `runtime_sequence` 是持久化 Trace 中的序号；
-- `id` 是 Web Run Manager 为 SSE 分配的进程内序号。
+- `id` 是 Run Store 为该 `run_id` 分配的持久化时间线序号。
 
-两者分开是因为 `run_queued`、`model_output_delta`、`approval_required` 等 Web 事件并不全是
-Runtime Trace 事件。高频 `model_output_delta` 只进入 Web 内存事件缓冲；完整的
-`model_response` 才写入 JSONL Trace 和 Checkpoint。
+两者分开是因为 `run_queued`、`model_output_delta`、`approval_required` 等界面事件并不全是
+Runtime Trace 事件。高频 `model_output_delta` 会按 100 ms 或 128 字符合并后写入 Run Store，
+避免每个字符都触发一次 SQLite 写入；完整的 `model_response` 仍写入 JSONL Trace 和 Checkpoint。
+SSE 每约 250 ms 查询一次新增事件，因此能看到另一个 CLI 进程刚写入的时间线而不需要进程间 IPC。
 
 ## 6. 网页审批为什么不会阻塞服务
 
@@ -197,13 +206,13 @@ Runtime Trace 事件。高频 `model_output_delta` 只进入 Web 内存事件缓
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | `GET` | `/api/health` | 查询服务状态、模型名和默认工作区 |
-| `GET` | `/api/runs` | 查询当前进程中的运行列表 |
+| `GET` | `/api/runs` | 查询已注册工作区中的持久化运行列表 |
 | `POST` | `/api/runs` | 创建并异步启动任务 |
 | `GET` | `/api/runs/{id}` | 查询一次运行的最新摘要 |
-| `GET` | `/api/runs/{id}/events/history` | 查询当前进程缓存的完整 Web 事件 |
+| `GET` | `/api/runs/{id}/events/history` | 查询 Run Store 中的完整时间线事件 |
 | `GET` | `/api/runs/{id}/events` | 订阅 SSE 实时事件 |
-| `POST` | `/api/runs/{id}/approval` | 批准或拒绝当前待审批操作 |
-| `POST` | `/api/runs/{id}/resume` | 使用新限制从 Checkpoint 恢复运行 |
+| `POST` | `/api/runs/{id}/approval` | 批准或拒绝当前 Web 任务的待审批操作 |
+| `POST` | `/api/runs/{id}/resume` | 使用新限制从 Checkpoint 恢复 Web 任务 |
 
 创建任务示例：
 
@@ -217,8 +226,8 @@ Runtime Trace 事件。高频 `model_output_delta` 只进入 Web 内存事件缓
 }
 ```
 
-SSE 支持标准 `Last-Event-ID` 请求头。连接中断后，前端可以从最后收到的事件继续获取，避免同一
-服务进程内的短暂断线造成事件缺失。
+SSE 支持标准 `Last-Event-ID` 请求头。连接中断后，前端可以从最后收到的持久化事件继续获取，
+避免短暂断线造成事件缺失。
 
 ## 8. 哪些数据会保存
 
@@ -226,12 +235,17 @@ SSE 支持标准 `Last-Event-ID` 请求头。连接中断后，前端可以从�
 
 | 数据 | 保存位置 | 服务重启后 |
 | --- | --- | --- |
-| 运行列表、状态摘要、Web 事件、SSE 订阅者 | Run Manager 内存 | 清空 |
+| CLI/Web 运行列表、状态摘要、时间线事件 | `<workspace>/.minicode/runs.db` | 保留 |
 | 模型响应、工具结果和终态 Trace | `<workspace>/.minicode/traces.jsonl` | 保留 |
 | 可恢复的完整消息、Token 和步数快照 | `<workspace>/.minicode/checkpoints.db` | 保留 |
+| Web 后台任务句柄、待审批 Future | Run Manager 内存 | 清空 |
 
-因此，“浏览器列表为空”不等于 Trace 或 Checkpoint 已删除。当前版本没有在服务启动时扫描多个
-工作区并重建运行列表；恢复按钮只针对当前进程已经知道的运行。
+三个文件职责不同：`runs.db` 服务于列表和时间线查询，`traces.jsonl` 服务于人类审计，
+`checkpoints.db` 服务于恢复。旧版本已经存在的 JSONL 不会自动导入 `runs.db`。服务也不会扫描
+整台机器寻找所有工作区，只读取启动参数指定的默认工作区，以及当前进程已注册的其他工作区。
+
+Web 服务重启后仍能看到默认工作区的历史摘要和事件，但内存中的 Web 执行句柄与待审批 Future
+无法恢复。CLI 发起的运行始终只读；即使页面看到了 `waiting_approval`，也必须回原终端处理。
 
 ## 9. 安全边界
 
@@ -289,7 +303,7 @@ npm run build
 ## 11. 当前未实现
 
 - 主动取消正在运行或等待审批的任务；
-- 从持久化数据自动重建 Web 运行列表；
+- 自动发现未配置的其他工作区；
 - Git Diff 和测试结果的专用视图；
 - 服务商专有的流式协议和非文本内容分片；
 - 多进程任务队列和跨实例事件总线；

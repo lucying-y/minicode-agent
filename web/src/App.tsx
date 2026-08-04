@@ -63,6 +63,10 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("zh-CN").format(value);
 }
 
+function SourceBadge({ source }: { source: Run["source"] }) {
+  return <span className={`source-badge source-${source}`}>{source.toUpperCase()}</span>;
+}
+
 function eventPresentation(event: ConsoleEvent) {
   const toolCall = event.data.call as { name?: string } | undefined;
   const toolCalls = event.data.tool_calls as Array<{ name?: string }> | undefined;
@@ -299,7 +303,9 @@ function RunSidebar({
 }) {
   const [query, setQuery] = useState("");
   const filtered = runs.filter((run) =>
-    `${run.task} ${run.workspace}`.toLowerCase().includes(query.toLowerCase()),
+    `${run.task} ${run.workspace} ${run.source} ${run.model_name}`
+      .toLowerCase()
+      .includes(query.toLowerCase()),
   );
 
   return (
@@ -328,7 +334,7 @@ function RunSidebar({
               <ChevronRight size={15} />
             </div>
             <div className="run-row-meta">
-              <span>{statusLabel[run.status] || run.status}</span>
+              <span><SourceBadge source={run.source} />{statusLabel[run.status] || run.status}</span>
               <span>{formatTime(run.updated_at)}</span>
             </div>
           </button>
@@ -514,9 +520,18 @@ function Inspector({
         </section>
       )}
 
+      {run.source === "cli" && run.status === "waiting_approval" && (
+        <section className="approval-panel readonly-approval">
+          <div className="approval-title"><TerminalSquare size={18} /><strong>等待终端审批</strong></div>
+          <p>此任务由 CLI 发起，请回到原终端批准或拒绝操作。</p>
+        </section>
+      )}
+
       <section className="inspector-section">
         <div className="inspector-section-title"><Settings2 size={15} />运行配置</div>
         <dl className="definition-list">
+          <div><dt>来源</dt><dd><SourceBadge source={run.source} /></dd></div>
+          <div><dt>模型</dt><dd title={run.model_name}>{run.model_name}</dd></div>
           <div><dt>工作区</dt><dd title={run.workspace}>{run.workspace}</dd></div>
           <div><dt>最大步数</dt><dd>{run.max_steps}</dd></div>
           <div><dt>上下文</dt><dd>{formatNumber(run.max_context_tokens)}</dd></div>
@@ -583,6 +598,15 @@ export default function App() {
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Console 初始化失败"))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void refreshRuns().catch((reason) => {
+        setError(reason instanceof Error ? reason.message : "运行列表刷新失败");
+      });
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, [refreshRuns]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -688,11 +712,12 @@ export default function App() {
                 <div className="run-heading">
                   <div className="run-status-line">
                     <span className={`status-chip status-${selectedRun.status}`}><span />{statusLabel[selectedRun.status] || selectedRun.status}</span>
+                    <SourceBadge source={selectedRun.source} />
                     <span className="workspace-path"><FolderGit2 size={14} />{selectedRun.workspace}</span>
                   </div>
                   <h1>{selectedRun.task}</h1>
                 </div>
-                {resumableStatuses.has(selectedRun.status) && (
+                {selectedRun.source === "web" && resumableStatuses.has(selectedRun.status) && (
                   <button className="button secondary" onClick={() => void resume()}><RotateCcw size={16} />恢复运行</button>
                 )}
               </div>

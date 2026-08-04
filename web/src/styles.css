@@ -76,6 +76,10 @@ button { cursor: pointer; }
 .run-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 620; }
 .run-row-top svg { color: #8a928d; }
 .run-row-meta { display: flex; justify-content: space-between; margin: 7px 23px 0 16px; color: #7b847f; font-size: 10.5px; }
+.run-row-meta > span { display: flex; align-items: center; gap: 5px; }
+.source-badge { height: 18px; display: inline-flex; align-items: center; padding: 0 5px; border: 1px solid #cdd5d0; border-radius: 3px; color: #56605a; background: #f5f7f5; font-size: 8.5px; font-weight: 780; line-height: 1; }
+.source-badge.source-cli { color: #77500f; border-color: #e2c88f; background: #fff7e8; }
+.source-badge.source-web { color: #255f8d; border-color: #b9d1e4; background: #eef7fc; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #929a95; }
 .status-dot.status-running, .status-dot.status-queued { background: var(--model); }
 .status-dot.status-waiting_approval { background: #da8b1d; }
@@ -142,6 +146,7 @@ button { cursor: pointer; }
 .approval-tool span { margin-left: auto; padding: 2px 5px; color: #925605; background: #f6e4c3; border-radius: 3px; font-size: 9px; text-transform: uppercase; }
 .approval-panel pre, .event-inspector pre { max-height: 300px; margin: 10px 0 0; padding: 10px; overflow: auto; color: #303733; background: #fff; border: 1px solid #e5d7bb; border-radius: 5px; font: 10.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.readonly-approval p { margin: 10px 0 0; color: #715b35; font-size: 11px; line-height: 1.55; }
 .inspector-section { padding: 16px; border-bottom: 1px solid var(--border); }
 .inspector-section-title { gap: 7px; color: #5e6762; font-size: 10.5px; font-weight: 740; text-transform: uppercase; }
 .event-copy-button { width: 28px; height: 28px; margin-left: auto; color: #5e6762; }

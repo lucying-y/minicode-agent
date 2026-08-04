@@ -11,8 +11,10 @@ export type Approval = {
 
 export type Run = {
   run_id: string;
+  source: "cli" | "web";
   task: string;
   workspace: string;
+  model_name: string;
   status: string;
   steps: number;
   input_tokens: number;

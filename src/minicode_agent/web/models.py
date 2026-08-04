@@ -47,8 +47,10 @@ class RunView(BaseModel):
     """Current user-facing state of a managed run."""
 
     run_id: str
+    source: Literal["cli", "web"]
     task: str
     workspace: str
+    model_name: str
     status: str
     steps: int
     input_tokens: int

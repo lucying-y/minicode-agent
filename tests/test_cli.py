@@ -3,6 +3,7 @@ from pathlib import Path
 
 from minicode_agent.cli import AlwaysApprover, ConsoleApprover, async_main, build_parser
 from minicode_agent.models import FakeModelProvider
+from minicode_agent.persistence import SqliteRunStore
 from minicode_agent.runtime import ModelResponse, ToolCall
 from minicode_agent.security import PermissionLevel
 
@@ -54,6 +55,12 @@ async def test_demo_runs_without_api_key(tmp_path: Path, capsys) -> None:
     assert "Demo completed after reading README.md." in output
     assert (tmp_path / ".minicode" / "traces.jsonl").exists()
     assert (tmp_path / ".minicode" / "checkpoints.db").exists()
+    assert (tmp_path / ".minicode" / "runs.db").exists()
+    runs = SqliteRunStore(tmp_path).list_runs()
+    assert len(runs) == 1
+    assert runs[0].source == "cli"
+    assert runs[0].status == "completed"
+    assert runs[0].output == "Demo completed after reading README.md."
 
 
 async def test_run_reports_missing_environment_configuration(

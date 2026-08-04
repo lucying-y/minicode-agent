@@ -12,9 +12,14 @@ from dotenv import load_dotenv
 
 from minicode_agent.evaluation import EvaluationRunner, load_task_suite
 from minicode_agent.models import FakeModelProvider, OpenAICompatibleProvider
-from minicode_agent.persistence import JsonlTraceSink, SqliteCheckpointStore
+from minicode_agent.persistence import (
+    JsonlTraceSink,
+    PersistentRunRecorder,
+    SqliteCheckpointStore,
+    SqliteRunStore,
+)
 from minicode_agent.runtime import AgentConfig, AgentRuntime, ModelResponse, RunStatus, ToolCall
-from minicode_agent.security import PermissionLevel, PermissionPolicy
+from minicode_agent.security import ApprovalHandler, PermissionLevel, PermissionPolicy, Workspace
 from minicode_agent.tools import create_default_registry
 
 
@@ -37,6 +42,36 @@ class AlwaysApprover:
     async def approve(self, call: ToolCall, permission: PermissionLevel) -> bool:
         del call, permission
         return True
+
+
+class RecordingApprover:
+    """Record surface-neutral approval events around another approver."""
+
+    def __init__(self, delegate: ApprovalHandler, store: SqliteRunStore, run_id: str) -> None:
+        self.delegate = delegate
+        self.store = store
+        self.run_id = run_id
+
+    async def approve(self, call: ToolCall, permission: PermissionLevel) -> bool:
+        approval_id = uuid4().hex
+        created_at = datetime.now(UTC).isoformat()
+        self.store.append_event(
+            self.run_id,
+            "approval_required",
+            {
+                "approval_id": approval_id,
+                "call": call.model_dump(mode="json"),
+                "permission": permission.value,
+                "created_at": created_at,
+            },
+        )
+        approved = await self.delegate.approve(call, permission)
+        self.store.append_event(
+            self.run_id,
+            "approval_resolved",
+            {"approval_id": approval_id, "approved": approved},
+        )
+        return approved
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -89,6 +124,20 @@ def _checkpoint_path(workspace: Path) -> Path:
 
 
 async def run_demo(workspace: Path) -> int:
+    workspace = Workspace(workspace).root
+    task = "Inspect this repository and finish the deterministic demo."
+    config = AgentConfig()
+    run_id = uuid4().hex
+    store = SqliteRunStore(workspace)
+    store.create_run(
+        run_id=run_id,
+        source="cli",
+        task=task,
+        model_name="scripted-demo",
+        config=config.model_dump(),
+    )
+    store.append_event(run_id, "run_queued", {"task": task})
+    recorder = PersistentRunRecorder(JsonlTraceSink(_trace_path(workspace)), store)
     readme = "README.md" if (workspace / "README.md").exists() else "pyproject.toml"
     model = FakeModelProvider(
         [
@@ -104,10 +153,13 @@ async def run_demo(workspace: Path) -> int:
     runtime = AgentRuntime(
         model,
         create_default_registry(workspace),
-        trace=JsonlTraceSink(_trace_path(workspace)),
+        config=config,
+        trace=recorder,
         checkpoint=SqliteCheckpointStore(_checkpoint_path(workspace)),
+        on_model_delta=recorder.on_model_delta,
     )
-    result = await runtime.run("Inspect this repository and finish the deterministic demo.")
+    result = await runtime.run(task, run_id=run_id)
+    recorder.flush_model_delta()
     print(result.output)
     print(f"run_id={result.run_id} status={result.status.value} steps={result.steps}")
     return 0 if result.status is RunStatus.COMPLETED else 1
@@ -139,8 +191,47 @@ async def run_model_command(args: argparse.Namespace) -> int:
         return 2
     api_key, base_url, model_name = model_configuration
 
-    workspace = args.workspace.resolve()
-    approver = AlwaysApprover() if args.yes else ConsoleApprover()
+    workspace = Workspace(args.workspace).root
+    config = AgentConfig(
+        max_steps=args.max_steps,
+        max_context_tokens=args.max_context_tokens,
+    )
+    checkpoint_store = SqliteCheckpointStore(_checkpoint_path(workspace))
+    store = SqliteRunStore(workspace)
+    if args.command == "resume":
+        run_id = args.run_id
+        checkpoint = checkpoint_store.load(run_id)
+        if checkpoint is None:
+            print(f"checkpoint not found: {run_id}")
+            return 2
+        if checkpoint.status == RunStatus.COMPLETED.value:
+            print(f"run is already completed: {run_id}")
+            return 2
+        if store.get_run(run_id) is None:
+            store.create_run(
+                run_id=run_id,
+                source="cli",
+                task=checkpoint.task,
+                model_name=model_name,
+                config=config.model_dump(),
+                status=checkpoint.status,
+            )
+        store.update_config(run_id, config.model_dump())
+        store.append_event(run_id, "run_resume_queued", {"max_steps": config.max_steps})
+    else:
+        run_id = uuid4().hex
+        store.create_run(
+            run_id=run_id,
+            source="cli",
+            task=args.task,
+            model_name=model_name,
+            config=config.model_dump(),
+        )
+        store.append_event(run_id, "run_queued", {"task": args.task})
+
+    base_approver = AlwaysApprover() if args.yes else ConsoleApprover()
+    approver = RecordingApprover(base_approver, store, run_id)
+    recorder = PersistentRunRecorder(JsonlTraceSink(_trace_path(workspace)), store)
     provider = OpenAICompatibleProvider(
         api_key=api_key,
         base_url=base_url,
@@ -150,12 +241,10 @@ async def run_model_command(args: argparse.Namespace) -> int:
         runtime = AgentRuntime(
             provider,
             create_default_registry(workspace, PermissionPolicy(approver)),
-            config=AgentConfig(
-                max_steps=args.max_steps,
-                max_context_tokens=args.max_context_tokens,
-            ),
-            trace=JsonlTraceSink(_trace_path(workspace)),
-            checkpoint=SqliteCheckpointStore(_checkpoint_path(workspace)),
+            config=config,
+            trace=recorder,
+            checkpoint=checkpoint_store,
+            on_model_delta=recorder.on_model_delta,
         )
         if args.command == "resume":
             try:
@@ -164,8 +253,9 @@ async def run_model_command(args: argparse.Namespace) -> int:
                 print(str(exc))
                 return 2
         else:
-            result = await runtime.run(args.task)
+            result = await runtime.run(args.task, run_id=run_id)
     finally:
+        recorder.flush_model_delta()
         await provider.aclose()
 
     print(result.output or result.error or result.status.value)

@@ -263,6 +263,7 @@ class AgentRuntime:
                 "status": status.value,
                 "steps": steps,
                 "usage": usage.model_dump(),
+                "output": output,
                 "error": error,
             },
         )

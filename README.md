@@ -22,6 +22,7 @@ an agent framework.
 - Exact, unique text replacement to make edits predictable and reviewable.
 - Append-only JSONL traces for model responses, tool results, usage, timing, and terminal status.
 - SQLite checkpoints that preserve consistent messages, cumulative usage, and trace sequence.
+- A workspace-local SQLite run store shared by CLI and Web timelines across processes.
 - Repeatable repository-task evaluation with deterministic verification and JSON metric reports.
 - Deterministic Fake Provider for offline testing and demos.
 - Local React Web Console with FastAPI, SSE event updates, browser approvals, and checkpoint resume.
@@ -35,8 +36,8 @@ uv sync --all-groups
 uv run minicode demo --workspace .
 ```
 
-The demo does not call an external model. It performs a scripted tool call and writes its trace to
-`.minicode/traces.jsonl`.
+The demo does not call an external model. It performs a scripted tool call, writes its readable
+trace to `.minicode/traces.jsonl`, and records its timeline in `.minicode/runs.db`.
 
 ### Web Console
 
@@ -55,6 +56,9 @@ browser approval and streaming-output flows can be exercised. Run
 `uv run minicode web --workspace /path/to/repo` instead to use the model configured in `.env`. See
 [the Chinese Web Console guide](docs/web-console.zh-CN.md) for the UI, API, lifecycle, and persistence
 details. The configured default workspace is editable for each new run.
+
+The console also lists runs started later from the CLI when both commands use the same workspace.
+CLI runs are view-only in the browser: approvals and resume operations remain in the terminal.
 
 The port is not tied to the provider mode. To keep demo and real-model consoles running together,
 use different free ports, for example `8000` for `--demo` and `8001` for the `.env` model.
@@ -93,8 +97,8 @@ the external problem:
 uv run minicode resume RUN_ID --workspace /path/to/repo --max-steps 24
 ```
 
-Checkpoints are stored in `.minicode/checkpoints.db`. Completed runs are intentionally immutable and
-cannot be resumed.
+Checkpoints are stored in `.minicode/checkpoints.db`. Shared CLI/Web timeline summaries and events
+are stored in `.minicode/runs.db`. Completed runs are intentionally immutable and cannot be resumed.
 
 ## Evaluation
 
@@ -172,9 +176,9 @@ src/minicode_agent/
 ├── models/        # provider protocol, fake model, OpenAI-compatible adapter
 ├── tools/         # schemas, registry, filesystem and shell tools
 ├── security/      # workspace boundary and permission policy
-├── persistence/   # append-only JSONL traces and SQLite checkpoints
+├── persistence/   # JSONL traces, SQLite checkpoints, and the shared run timeline store
 ├── evaluation/    # task schemas, isolated execution, verification, reports
-├── web/           # FastAPI app, in-process run manager, SSE and browser approval
+├── web/           # FastAPI app, persisted run manager, SSE and browser approval
 └── cli.py         # demo and real-model commands
 web/               # React, TypeScript and Vite console
 ```
@@ -184,8 +188,8 @@ web/               # React, TypeScript and Vite console
 - The provider targets OpenAI-compatible `/chat/completions` and streams standard SSE deltas; it does
   not support provider-specific protocols.
 - Context usage is estimated from serialized character length, not a provider tokenizer.
-- Web run summaries and SSE event buffers are process-local; restarting the server clears the run
-  list, while JSONL traces and SQLite checkpoints remain in each workspace.
+- The Web Console discovers persisted history only in its configured workspace and workspaces used
+  by Web runs during that server process. Existing JSONL traces are not backfilled into `runs.db`.
 - There is no task cancellation endpoint, Git diff view, container sandbox, multi-user
   authentication, MCP, or sub-agent orchestration yet.
 

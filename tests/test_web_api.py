@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 
 from minicode_agent.models import FakeModelProvider
+from minicode_agent.persistence import SqliteRunStore
 from minicode_agent.runtime import ModelResponse, ToolCall
 from minicode_agent.web import RunManager, create_app
 
@@ -41,7 +42,7 @@ async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
             ModelResponse(content="change verified"),
         ]
     )
-    manager = RunManager(lambda: model, model_name="fake-model")
+    manager = RunManager(lambda: model, model_name="fake-model", default_workspace=tmp_path)
     app = create_app(manager)
     transport = httpx.ASGITransport(app=app)
 
@@ -50,7 +51,7 @@ async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
         assert health.json() == {
             "status": "ok",
             "model": "fake-model",
-            "default_workspace": str(Path.cwd()),
+            "default_workspace": str(tmp_path),
         }
 
         created = await client.post(
@@ -59,6 +60,8 @@ async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
         )
         assert created.status_code == 202
         run_id = created.json()["run_id"]
+        assert created.json()["source"] == "web"
+        assert created.json()["model_name"] == "fake-model"
 
         await _wait_for_status(manager, run_id, "waiting_approval")
         pending = manager.get_run(run_id).pending_approval
@@ -96,7 +99,11 @@ async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
 
 
 async def test_web_rejects_missing_workspace(tmp_path: Path) -> None:
-    manager = RunManager(lambda: FakeModelProvider([]), model_name="fake-model")
+    manager = RunManager(
+        lambda: FakeModelProvider([]),
+        model_name="fake-model",
+        default_workspace=tmp_path,
+    )
     app = create_app(manager)
     transport = httpx.ASGITransport(app=app)
 
@@ -108,6 +115,7 @@ async def test_web_rejects_missing_workspace(tmp_path: Path) -> None:
 
     assert response.status_code == 400
     assert "workspace is not a directory" in response.json()["detail"]
+    await manager.shutdown()
 
 
 async def test_web_publishes_streaming_model_output(tmp_path: Path) -> None:
@@ -144,4 +152,51 @@ async def test_web_publishes_streaming_model_output(tmp_path: Path) -> None:
         assert events[-2]["event_type"] == "model_response"
         assert events[-1]["event_type"] == "run_finished"
 
+    await manager.shutdown()
+
+
+async def test_web_discovers_external_cli_run_and_streams_its_events(tmp_path: Path) -> None:
+    manager = RunManager(
+        lambda: FakeModelProvider([]),
+        model_name="web-model",
+        default_workspace=tmp_path,
+    )
+    external_store = SqliteRunStore(tmp_path)
+    external_store.create_run(
+        run_id="cli-run",
+        source="cli",
+        task="inspect from the terminal",
+        model_name="cli-model",
+        config={"max_steps": 8, "max_context_tokens": 16_000, "max_total_tokens": 50_000},
+    )
+    external_store.append_event("cli-run", "run_queued", {"task": "inspect from the terminal"})
+
+    listed = manager.list_runs()
+    assert len(listed) == 1
+    assert listed[0].source == "cli"
+    assert listed[0].model_name == "cli-model"
+
+    subscription = manager.subscribe("cli-run", after=1)
+    pending_event = asyncio.create_task(anext(subscription))
+    await asyncio.sleep(0)
+    external_store.append_event("cli-run", "run_started", {"task": "inspect from the terminal"})
+
+    event = await asyncio.wait_for(pending_event, timeout=1)
+    assert event["id"] == 2
+    assert event["event_type"] == "run_started"
+    await subscription.aclose()
+
+    app = create_app(manager)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resume = await client.post("/api/runs/cli-run/resume", json={"max_steps": 12})
+        approval = await client.post(
+            "/api/runs/cli-run/approval",
+            json={"approval_id": "terminal-only", "approved": True},
+        )
+
+    assert resume.status_code == 409
+    assert "read-only" in resume.json()["detail"]
+    assert approval.status_code == 409
+    assert "cannot be approved" in approval.json()["detail"]
     await manager.shutdown()

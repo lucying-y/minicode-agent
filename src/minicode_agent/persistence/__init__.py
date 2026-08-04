@@ -5,6 +5,7 @@ from minicode_agent.persistence.checkpoint import (
     NullCheckpointStore,
     SqliteCheckpointStore,
 )
+from minicode_agent.persistence.run_store import PersistentRunRecorder, SqliteRunStore, StoredRun
 from minicode_agent.persistence.trace import JsonlTraceSink, NullTraceSink, TraceEvent, TraceSink
 
 __all__ = [
@@ -12,7 +13,10 @@ __all__ = [
     "JsonlTraceSink",
     "NullCheckpointStore",
     "NullTraceSink",
+    "PersistentRunRecorder",
+    "SqliteRunStore",
     "SqliteCheckpointStore",
+    "StoredRun",
     "TraceEvent",
     "TraceSink",
 ]

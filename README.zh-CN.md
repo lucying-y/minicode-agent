@@ -27,6 +27,7 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 - 使用唯一文本精确替换，使文件修改过程更可预测、便于审查。
 - 使用只追加的 JSONL 轨迹记录模型响应、工具结果、Token 用量、耗时和最终状态。
 - 使用 SQLite 保存一致执行边界上的消息、累计用量和轨迹序号，支持断点恢复。
+- 使用工作区级 SQLite Run Store，让 CLI 与 Web 跨进程共享运行摘要和时间线。
 - 提供可重复运行的仓库任务评测，通过确定性校验命令判断结果并生成 JSON 报告。
 - 提供确定性的 Fake Provider，用于离线测试和演示。
 - 提供本地 React Web Console，通过 FastAPI、SSE、网页审批和 Checkpoint 恢复观察与控制任务。
@@ -40,8 +41,8 @@ uv sync --all-groups
 uv run minicode demo --workspace .
 ```
 
-演示命令不会调用外部模型。它会执行一次预设工具调用，并将运行轨迹写入
-`.minicode/traces.jsonl`。
+演示命令不会调用外部模型。它会执行一次预设工具调用，将可读轨迹写入
+`.minicode/traces.jsonl`，并将共享时间线写入 `.minicode/runs.db`。
 
 ### Web Console
 
@@ -64,6 +65,9 @@ uv run minicode web --workspace /path/to/repo
 
 `--workspace` 设置页面创建任务时的默认工作区，仍可在每个新任务中单独修改。Fake Provider 和
 真实模型都会把模型文本增量显示在执行时间线中。
+
+只要 Web 与 CLI 使用相同的 `--workspace`，Web 还会显示之后从 CLI 发起的任务。CLI 任务在网页
+中只读：审批和恢复仍须回到原终端完成，Web 不会接管 CLI 的执行控制。
 
 端口不与模型模式绑定。需要同时运行演示和真实模型时，可约定演示使用 `8000`、真实模型使用
 `8001`，也可以通过 `--port` 选择任意空闲端口。
@@ -103,7 +107,8 @@ uv run minicode run "检查项目并修复失败的测试" --workspace /path/to/
 uv run minicode resume RUN_ID --workspace /path/to/repo --max-steps 24
 ```
 
-Checkpoint 保存在 `.minicode/checkpoints.db`。已经完成的运行记录不可修改，也不能再次恢复。
+Checkpoint 保存在 `.minicode/checkpoints.db`，CLI/Web 共用的运行摘要和时间线保存在
+`.minicode/runs.db`。已经完成的运行记录不可修改，也不能再次恢复。
 
 ## 评测
 
@@ -176,9 +181,9 @@ src/minicode_agent/
 ├── models/        # 模型协议、Fake Provider、OpenAI 兼容适配器
 ├── tools/         # 工具 Schema、注册中心、文件系统与 Shell 工具
 ├── security/      # 工作区边界与权限策略
-├── persistence/   # 只追加 JSONL 轨迹与 SQLite Checkpoint
+├── persistence/   # JSONL 轨迹、SQLite Checkpoint 与共享运行时间线
 ├── evaluation/    # 任务定义、隔离执行、结果校验与报告
-├── web/           # FastAPI、进程内 Run Manager、SSE 与网页审批
+├── web/           # FastAPI、持久化 Run Manager、SSE 与网页审批
 └── cli.py         # 离线演示与真实模型命令入口
 web/               # React、TypeScript 与 Vite 控制台
 ```
@@ -187,8 +192,8 @@ web/               # React、TypeScript 与 Vite 控制台
 
 - 模型适配器使用 OpenAI 兼容 `/chat/completions`，支持标准 SSE 增量输出，但不适配服务商专有协议。
 - 上下文用量通过序列化后的字符长度估算，尚未使用模型对应的 Tokenizer。
-- Web 运行摘要和 SSE 事件缓冲保存在当前服务进程内；服务重启后运行列表会清空，但目标工作区中
-  的 JSONL Trace 和 SQLite Checkpoint 会保留。
+- Web 只发现启动时配置的工作区，以及本次服务运行期间创建过 Web 任务的其他工作区。已有的旧
+  JSONL Trace 不会自动回填到 `.minicode/runs.db`。
 - 当前没有任务取消、Git Diff 视图、Docker 沙箱、多用户认证、MCP 或多 Agent 编排。
 
 ## 后续计划
