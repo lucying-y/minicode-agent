@@ -1,9 +1,8 @@
 """Bounded shell command tool."""
 
-import asyncio
-
 from pydantic import BaseModel, Field
 
+from minicode_agent.execution import ShellBackend, default_shell
 from minicode_agent.runtime.types import ToolResult
 from minicode_agent.security import PermissionLevel, Workspace
 from minicode_agent.tools.base import Tool
@@ -17,39 +16,28 @@ class RunShellInput(BaseModel):
 
 class RunShellTool(Tool[RunShellInput]):
     name = "run_shell"
-    description = "Run one shell command in the workspace with a timeout and bounded output."
     permission = PermissionLevel.EXECUTE
     input_model = RunShellInput
 
+    def __init__(self, shell: ShellBackend | None = None) -> None:
+        self.shell = shell or default_shell()
+        self.description = self.shell.tool_description
+
     async def run(self, data: RunShellInput, workspace: Workspace) -> ToolResult:
-        process = await asyncio.create_subprocess_shell(
+        result = await self.shell.run(
             data.command,
             cwd=workspace.root,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            timeout_seconds=data.timeout_seconds,
+            max_chars=data.max_chars,
         )
-        try:
-            output, _ = await asyncio.wait_for(process.communicate(), timeout=data.timeout_seconds)
-        except TimeoutError:
-            process.kill()
-            await process.communicate()
-            return ToolResult(
-                content=f"command timed out after {data.timeout_seconds}s",
-                is_error=True,
-                metadata={"exit_code": None, "timed_out": True},
-            )
-
-        content = output.decode("utf-8", errors="replace")
-        truncated = len(content) > data.max_chars
-        if truncated:
-            content = content[: data.max_chars] + "\n<output truncated>"
         return ToolResult(
-            content=content,
-            is_error=process.returncode != 0,
+            content=result.output,
+            is_error=result.timed_out or result.exit_code != 0,
             metadata={
-                "exit_code": process.returncode,
-                "timed_out": False,
-                "truncated": truncated,
+                "exit_code": result.exit_code,
+                "timed_out": result.timed_out,
+                "truncated": result.truncated,
+                "shell": self.shell.info.kind,
+                "shell_name": self.shell.info.display_name,
             },
         )
-

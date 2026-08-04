@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from minicode_agent.execution import ShellBackend, default_shell, platform_system_prompt
 from minicode_agent.models.base import ModelProvider
 from minicode_agent.persistence import (
     JsonlTraceSink,
@@ -84,10 +85,12 @@ class RunManager:
         *,
         model_name: str,
         default_workspace: Path | None = None,
+        shell: ShellBackend | None = None,
     ) -> None:
         self.provider_factory = provider_factory
         self.model_name = model_name
         self.default_workspace = Workspace(default_workspace or Path.cwd()).root
+        self.shell = shell or default_shell()
         self._stores: dict[Path, SqliteRunStore] = {
             self.default_workspace: SqliteRunStore(self.default_workspace)
         }
@@ -112,7 +115,8 @@ class RunManager:
 
     async def create_run(self, request: CreateRunRequest) -> RunView:
         workspace = Workspace(Path(request.workspace)).root
-        config = AgentConfig(
+        config = self._config(
+            workspace,
             max_steps=request.max_steps,
             max_context_tokens=request.max_context_tokens,
             max_total_tokens=request.max_total_tokens,
@@ -145,7 +149,8 @@ class RunManager:
         if stored.status == "completed":
             raise ValueError("completed runs cannot be resumed")
 
-        config = AgentConfig(
+        config = self._config(
+            Path(stored.workspace),
             max_steps=request.max_steps,
             max_context_tokens=request.max_context_tokens,
             max_total_tokens=request.max_total_tokens,
@@ -205,6 +210,7 @@ class RunManager:
             create_default_registry(
                 record.workspace,
                 PermissionPolicy(_WebApprover(self, record)),
+                self.shell,
             ),
             config=record.config,
             trace=recorder,
@@ -230,6 +236,29 @@ class RunManager:
 
     def _append_event(self, record: _RunRecord, event_type: str, data: dict) -> None:
         self._store_for_workspace(record.workspace).append_event(record.run_id, event_type, data)
+
+    def _config(
+        self,
+        workspace: Path,
+        *,
+        max_steps: int,
+        max_context_tokens: int,
+        max_total_tokens: int,
+    ) -> AgentConfig:
+        config = AgentConfig(
+            max_steps=max_steps,
+            max_context_tokens=max_context_tokens,
+            max_total_tokens=max_total_tokens,
+        )
+        return config.model_copy(
+            update={
+                "system_prompt": platform_system_prompt(
+                    config.system_prompt,
+                    self.shell,
+                    workspace,
+                )
+            }
+        )
 
     def _store_for_workspace(self, workspace: Path) -> SqliteRunStore:
         root = Workspace(workspace).root

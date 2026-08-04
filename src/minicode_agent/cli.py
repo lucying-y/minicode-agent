@@ -11,6 +11,12 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from minicode_agent.evaluation import EvaluationRunner, load_task_suite
+from minicode_agent.execution import (
+    ShellBackend,
+    ShellUnavailableError,
+    default_shell,
+    platform_system_prompt,
+)
 from minicode_agent.models import FakeModelProvider, OpenAICompatibleProvider
 from minicode_agent.persistence import (
     JsonlTraceSink,
@@ -139,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8000)
     web.add_argument("--workspace", type=Path, default=Path.cwd())
-    web.add_argument("--web-dist", type=Path, default=Path("web/dist"))
+    web.add_argument("--web-dist", type=Path, default=_default_web_dist())
     web.add_argument("--demo", action="store_true", help="use a scripted model without an API key")
     return parser
 
@@ -164,10 +170,39 @@ def _checkpoint_path(workspace: Path) -> Path:
     return workspace.resolve() / ".minicode" / "checkpoints.db"
 
 
+def _default_web_dist() -> Path:
+    return Path(__file__).resolve().parents[2] / "web" / "dist"
+
+
+def _agent_config(
+    workspace: Path,
+    shell: ShellBackend,
+    *,
+    max_steps: int = 12,
+    max_context_tokens: int = 32_000,
+    max_total_tokens: int = 100_000,
+) -> AgentConfig:
+    config = AgentConfig(
+        max_steps=max_steps,
+        max_context_tokens=max_context_tokens,
+        max_total_tokens=max_total_tokens,
+    )
+    return config.model_copy(
+        update={
+            "system_prompt": platform_system_prompt(
+                config.system_prompt,
+                shell,
+                workspace,
+            )
+        }
+    )
+
+
 async def run_demo(workspace: Path) -> int:
     workspace = Workspace(workspace).root
+    shell = default_shell()
     task = "Inspect this repository and finish the deterministic demo."
-    config = AgentConfig()
+    config = _agent_config(workspace, shell)
     run_id = uuid4().hex
     store = SqliteRunStore(workspace)
     store.create_run(
@@ -193,7 +228,7 @@ async def run_demo(workspace: Path) -> int:
     )
     runtime = AgentRuntime(
         model,
-        create_default_registry(workspace),
+        create_default_registry(workspace, shell=shell),
         config=config,
         trace=recorder,
         checkpoint=SqliteCheckpointStore(_checkpoint_path(workspace)),
@@ -233,7 +268,10 @@ async def run_model_command(args: argparse.Namespace) -> int:
     api_key, base_url, model_name = model_configuration
 
     workspace = Workspace(args.workspace).root
-    config = AgentConfig(
+    shell = default_shell()
+    config = _agent_config(
+        workspace,
+        shell,
         max_steps=args.max_steps,
         max_context_tokens=args.max_context_tokens,
         max_total_tokens=args.max_total_tokens,
@@ -282,7 +320,7 @@ async def run_model_command(args: argparse.Namespace) -> int:
     try:
         runtime = AgentRuntime(
             provider,
-            create_default_registry(workspace, PermissionPolicy(approver)),
+            create_default_registry(workspace, PermissionPolicy(approver), shell),
             config=config,
             trace=recorder,
             checkpoint=checkpoint_store,
@@ -342,6 +380,7 @@ async def run_chat_command(args: argparse.Namespace) -> int:
         return 2
     api_key, base_url, model_name = model_configuration
     workspace = Workspace(args.workspace).root
+    shell = default_shell()
     checkpoint_store = SqliteCheckpointStore(_checkpoint_path(workspace))
     store = SqliteRunStore(workspace)
     provider = OpenAICompatibleProvider(
@@ -349,7 +388,9 @@ async def run_chat_command(args: argparse.Namespace) -> int:
         base_url=base_url,
         model=model_name,
     )
-    base_config = AgentConfig(
+    base_config = _agent_config(
+        workspace,
+        shell,
         max_steps=args.max_steps,
         max_context_tokens=args.max_context_tokens,
         max_total_tokens=args.max_total_tokens,
@@ -375,7 +416,7 @@ async def run_chat_command(args: argparse.Namespace) -> int:
         delta_writer = ConsoleDeltaWriter(recorder)
         runtime = AgentRuntime(
             provider,
-            create_default_registry(workspace, PermissionPolicy(approver)),
+            create_default_registry(workspace, PermissionPolicy(approver), shell),
             config=base_config,
             trace=recorder,
             checkpoint=checkpoint_store,
@@ -389,6 +430,7 @@ async def run_chat_command(args: argparse.Namespace) -> int:
     print("MiniCode Agent")
     print(f"Workspace: {workspace}")
     print(f"Model: {model_name}")
+    print(f"Shell: {shell.info.display_name}")
     print(f"Run ID: {run_id}")
     print("Type /help for commands. Use /exit, /quit, exit, or quit to leave.\n")
 
@@ -475,6 +517,7 @@ async def run_evaluation_command(args: argparse.Namespace) -> int:
     if model_configuration is None:
         return 2
     api_key, base_url, model_name = model_configuration
+    shell = default_shell()
     try:
         suite = load_task_suite(args.tasks.resolve())
     except (OSError, ValueError) as exc:
@@ -498,6 +541,7 @@ async def run_evaluation_command(args: argparse.Namespace) -> int:
                 max_steps=args.max_steps,
                 max_context_tokens=args.max_context_tokens,
             ),
+            shell=shell,
         ).run()
     finally:
         await provider.aclose()
@@ -515,6 +559,7 @@ async def run_web_command(args: argparse.Namespace) -> int:
 
     from minicode_agent.web import RunManager, create_app
 
+    shell = default_shell()
     if args.demo:
         model_name = "scripted-demo"
 
@@ -527,7 +572,7 @@ async def run_web_command(args: argparse.Namespace) -> int:
                             ToolCall(
                                 id="web-demo-pwd",
                                 name="run_shell",
-                                arguments={"command": "pwd"},
+                                arguments={"command": shell.demo_command},
                             )
                         ],
                     ),
@@ -561,11 +606,16 @@ async def run_web_command(args: argparse.Namespace) -> int:
             provider_factory,
             model_name=model_name,
             default_workspace=args.workspace,
+            shell=shell,
         )
     except (OSError, ValueError) as exc:
         print(f"Invalid default workspace: {exc}")
         return 2
     app = create_app(manager, static_dir=args.web_dist)
+    print(
+        f"Runtime environment: {shell.info.operating_system}; "
+        f"shell={shell.info.display_name}"
+    )
     server = uvicorn.Server(
         uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
     )
@@ -578,15 +628,19 @@ async def async_main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command is None:
         args = parser.parse_args(["chat"])
-    if args.command == "demo":
-        return await run_demo(args.workspace)
-    if args.command == "eval":
-        return await run_evaluation_command(args)
-    if args.command == "web":
-        return await run_web_command(args)
-    if args.command == "chat":
-        return await run_chat_command(args)
-    return await run_model_command(args)
+    try:
+        if args.command == "demo":
+            return await run_demo(args.workspace)
+        if args.command == "eval":
+            return await run_evaluation_command(args)
+        if args.command == "web":
+            return await run_web_command(args)
+        if args.command == "chat":
+            return await run_chat_command(args)
+        return await run_model_command(args)
+    except ShellUnavailableError as exc:
+        print(f"Shell unavailable: {exc}")
+        return 2
 
 
 def main() -> None:

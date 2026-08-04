@@ -42,6 +42,11 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
         return HealthView(
             model=manager.model_name,
             default_workspace=str(manager.default_workspace),
+            platform=manager.shell.info.platform,
+            operating_system=manager.shell.info.operating_system,
+            shell=manager.shell.info.kind,
+            shell_name=manager.shell.info.name,
+            shell_version=manager.shell.info.version,
         )
 
     @app.get("/api/runs", response_model=list[RunView])
@@ -123,7 +128,7 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
         if resolved_static is None or not (resolved_static / "index.html").is_file():
             raise HTTPException(
                 status_code=503,
-                detail="Web Console is not built. Run `npm install && npm run build` in web/.",
+                detail="Web Console is not built. Run `npm ci && npm run build` in web/.",
             )
         candidate = (resolved_static / path).resolve()
         if candidate.is_relative_to(resolved_static) and candidate.is_file():

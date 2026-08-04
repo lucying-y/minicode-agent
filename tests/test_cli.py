@@ -4,6 +4,7 @@ from pathlib import Path
 from minicode_agent.cli import (
     AlwaysApprover,
     ConsoleApprover,
+    _default_web_dist,
     _normalize_chat_input,
     async_main,
     build_parser,
@@ -43,7 +44,7 @@ def test_parser_accepts_run_configuration() -> None:
     web_args = build_parser().parse_args(["web", "--port", "9000", "--demo"])
     assert web_args.command == "web"
     assert web_args.port == 9000
-    assert web_args.web_dist == Path("web/dist")
+    assert web_args.web_dist == _default_web_dist()
     assert web_args.workspace == Path.cwd()
     assert web_args.demo
 
@@ -135,6 +136,8 @@ async def test_chat_keeps_context_and_clear_starts_new_run(
     assert "1. first question" in output
     assert "2. follow up" in output
     assert "Context cleared. New Run ID:" in output
+    first_request, _ = fake_model.requests[0]
+    assert "Runtime environment:" in first_request[0].content
     second_request, _ = fake_model.requests[1]
     assert [(message.role, message.content) for message in second_request[-3:]] == [
         ("user", "first question"),
@@ -257,7 +260,7 @@ async def test_eval_cli_runs_suite_and_writes_report(tmp_path: Path, monkeypatch
                         "prompt": "Change value to 2",
                         "files": {"app.py": "value = 1\n"},
                         "verify_command": (
-                            "python3 -c 'from app import value; assert value == 2'"
+                            'python -c "from app import value; assert value == 2"'
                         ),
                     }
                 ],
@@ -297,3 +300,19 @@ async def test_eval_cli_runs_suite_and_writes_report(tmp_path: Path, monkeypatch
     reports = list(output_root.glob("*/report.json"))
     assert len(reports) == 1
     assert json.loads(reports[0].read_text(encoding="utf-8"))["success_rate"] == 1.0
+
+
+async def test_cli_reports_missing_platform_shell(tmp_path: Path, monkeypatch, capsys) -> None:
+    from minicode_agent.execution import ShellUnavailableError
+
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+
+    def missing_shell():
+        raise ShellUnavailableError("PowerShell is required")
+
+    monkeypatch.setattr("minicode_agent.cli.default_shell", missing_shell)
+
+    exit_code = await async_main(["demo", "--workspace", str(tmp_path)])
+
+    assert exit_code == 2
+    assert "Shell unavailable: PowerShell is required" in capsys.readouterr().out

@@ -30,7 +30,7 @@ Web Console 是本地开发工具，不是面向公网的多用户服务。
 ```bash
 uv sync --all-groups
 cd web
-npm install
+npm ci
 npm run build
 cd ..
 ```
@@ -52,10 +52,30 @@ uv run minicode web --demo --workspace /path/to/repository
 }
 ```
 
-页面会进入“等待审批”。批准后执行 `pwd`，第二次模型响应会以分片形式实时显示。这条路径适合
-检查页面、模型流式输出、SSE 和审批链路，不会调用外部模型。
+在 macOS/Linux 上，页面会进入“等待审批”。批准后执行 `pwd`，第二次模型响应会以分片形式实时
+显示。这条路径适合检查页面、模型流式输出、SSE 和审批链路，不会调用外部模型。
 
-### 2.3 使用真实模型
+Windows 上 Fake Provider 会改为请求 `Get-Location`。Demo、真实模型任务和评测都会使用服务
+启动时检测到的同一个 Shell Backend，不会让 Web 路径与 CLI 路径使用不同的命令语言。
+
+### 2.3 原生 Windows PowerShell
+
+Windows 10/11 不需要 WSL。首次构建和启动可在 PowerShell 中执行：
+
+```powershell
+uv sync --all-groups
+Set-Location web
+npm ci
+npm run build
+Set-Location ..
+Copy-Item .env.example .env
+uv run minicode web --workspace "C:\Users\damon\projects\demo" --port 8000
+```
+
+程序优先使用 `pwsh.exe`，没有 PowerShell 7 时回退到 `powershell.exe`。页面顶部的连接状态会显示
+实际 Shell，完整的操作系统、Shell 类型和版本可从 `/api/health` 查询。
+
+### 2.4 使用真实模型
 
 先在项目根目录创建本地 `.env`：
 
@@ -77,7 +97,7 @@ uv run minicode web --workspace /path/to/repository
 `stream_options.include_usage`，文本位于 `choices[0].delta.content`，工具调用位于
 `choices[0].delta.tool_calls`，并以 `data: [DONE]` 结束。
 
-### 2.4 常用启动参数
+### 2.5 常用启动参数
 
 ```bash
 uv run minicode web \
@@ -94,7 +114,7 @@ uv run minicode web \
 Web 只会自动发现这个默认工作区中的 CLI 记录。要让 CLI 时间线出现在页面中，两边必须传入同一
 个 `--workspace`。服务运行期间从网页使用过的其他工作区也会加入本进程的可查询范围。
 
-### 2.5 同时运行演示和真实模型
+### 2.6 同时运行演示和真实模型
 
 端口与模型模式没有固定绑定，默认端口都是 `8000`。同时运行两个服务时需要显式选择不同的空闲
 端口，例如：
@@ -210,7 +230,7 @@ SSE 每约 250 ms 查询一次新增事件，因此能看到另一个 CLI 进程
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `GET` | `/api/health` | 查询服务状态、模型名和默认工作区 |
+| `GET` | `/api/health` | 查询服务状态、模型名、默认工作区、操作系统和 Shell 信息 |
 | `GET` | `/api/runs` | 查询已注册工作区中的持久化运行列表 |
 | `POST` | `/api/runs` | 创建并异步启动任务 |
 | `GET` | `/api/runs/{id}` | 查询一次运行的最新摘要 |

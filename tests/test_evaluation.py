@@ -11,7 +11,7 @@ async def test_evaluation_runner_edits_fixture_and_records_metrics(tmp_path: Pat
         id="fix-value",
         prompt="Change value to 2",
         files={"app.py": "value = 1\n"},
-        verify_command="python3 -c 'from app import value; assert value == 2'",
+        verify_command='python -c "from app import value; assert value == 2"',
     )
     model = FakeModelProvider(
         [
@@ -44,6 +44,9 @@ async def test_evaluation_runner_edits_fixture_and_records_metrics(tmp_path: Pat
     assert report.results[0].runtime_status == RunStatus.COMPLETED.value
     assert report.results[0].steps == 2
     assert report.results[0].input_tokens == 22
+    first_request, _ = model.requests[0]
+    assert "Runtime environment:" in first_request[0].content
+    assert str(output_dir / "fix-value") in first_request[0].content
     assert (output_dir / "fix-value" / "app.py").read_text(encoding="utf-8") == "value = 2\n"
     saved_report = json.loads((output_dir / "report.json").read_text(encoding="utf-8"))
     assert saved_report["results"][0]["passed"] is True
@@ -58,4 +61,3 @@ def test_load_bundled_task_suite() -> None:
         "implement-slugify",
         "repair-config-lookup",
     ]
-

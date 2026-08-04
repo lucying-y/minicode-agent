@@ -38,7 +38,37 @@ class PermissionPolicy:
         "git reset --hard",
         "git clean -fd",
         ":(){:|:&};:",
+        "format-volume",
+        "clear-disk",
+        "initialize-disk",
+        "diskpart",
+        "stop-computer",
+        "restart-computer",
+        "clear-recyclebin",
+        "bcdedit",
+        "-encodedcommand",
+        "-encodedarguments",
+        "invoke-expression",
     )
+
+    @classmethod
+    def _blocked_command(cls, command: str) -> bool:
+        normalized = " ".join(command.casefold().split())
+        if any(fragment in normalized for fragment in cls._blocked_command_fragments):
+            return True
+        tokens = [word.strip(";&|()") for word in normalized.replace("/", " /").split()]
+        remove_commands = {"rm", "ri", "remove-item"}
+        recurse_options = {"-r", "-recurse"}
+        force_options = {"-f", "-fo", "-force"}
+        combined_options = {"-rf", "-fr"}
+        if remove_commands.intersection(tokens) and (
+            combined_options.intersection(tokens)
+            or (recurse_options.intersection(tokens) and force_options.intersection(tokens))
+        ):
+            return True
+        if {"del", "erase", "rd", "rmdir"}.intersection(tokens) and "/s" in tokens:
+            return True
+        return "start-process" in normalized and "-verb runas" in normalized
 
     def __init__(self, approver: ApprovalHandler | None = None) -> None:
         self.approver = approver
@@ -48,8 +78,8 @@ class PermissionPolicy:
             return
 
         if permission is PermissionLevel.EXECUTE:
-            command = str(call.arguments.get("command", "")).lower()
-            if any(fragment in command for fragment in self._blocked_command_fragments):
+            command = str(call.arguments.get("command", ""))
+            if self._blocked_command(command):
                 raise PermissionDenied("command matches a blocked high-risk pattern")
 
         if self.approver is None:
@@ -57,4 +87,3 @@ class PermissionPolicy:
 
         if not await self.approver.approve(call, permission):
             raise PermissionDenied(f"{permission.value} tool call was rejected")
-

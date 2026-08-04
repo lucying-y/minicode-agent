@@ -35,7 +35,8 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 
 ## 快速开始
 
-项目需要 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)。
+项目需要 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)。Web Console 还需要 Node.js 20.19+
+（建议使用 Node.js 22 LTS）。支持 macOS、Linux，以及不依赖 WSL 的原生 Windows PowerShell。
 
 ```bash
 uv sync --all-groups
@@ -45,13 +46,47 @@ uv run minicode demo --workspace .
 演示命令不会调用外部模型。它会执行一次预设工具调用，将可读轨迹写入
 `.minicode/traces.jsonl`，并将共享时间线写入 `.minicode/runs.db`。
 
+### 原生 Windows PowerShell
+
+Windows 10/11 可直接使用 PowerShell，不需要 WSL 或 Git Bash。程序优先检测 PowerShell 7 的
+`pwsh.exe`，未安装时回退到系统自带的 Windows PowerShell 5.1 `powershell.exe`。模型会收到当前
+操作系统、PowerShell 版本和工作区信息，`run_shell`、Web Demo 和评测校验命令共用同一个
+PowerShell 执行后端，不会隐式转交给 `cmd.exe`。
+
+在 PowerShell 中首次安装和构建：
+
+```powershell
+git clone https://github.com/anqi399/minicode-agent.git
+Set-Location minicode-agent
+uv sync --all-groups
+
+Set-Location web
+npm ci
+npm run build
+Set-Location ..
+
+Copy-Item .env.example .env
+notepad .env
+```
+
+运行交互式 CLI 或 Web Console：
+
+```powershell
+uv run minicode chat --workspace "C:\Users\damon\projects\demo"
+uv run minicode web --workspace "C:\Users\damon\projects\demo" --port 8000
+```
+
+Windows 命令输出统一按 UTF-8 读取，支持带空格和中文的工作区路径。命令超时时会终止 PowerShell
+及其子进程；CLI 启动信息和 Web `/api/health` 会显示实际选中的 Shell。PowerShell 命令仍以当前
+Windows 用户权限运行，审批和危险命令拒绝不是操作系统沙箱，不要对不可信任务使用 `--yes`。
+
 ### Web Console
 
 首次使用需要安装并构建前端：
 
 ```bash
 cd web
-npm install
+npm ci
 npm run build
 cd ..
 uv run minicode web --demo --workspace /path/to/repo
@@ -116,7 +151,7 @@ uv run minicode chat --workspace /path/to/repo
 如果希望在任意项目目录直接输入 `minicode`，可以安装一次当前源码：
 
 ```bash
-uv tool install -e /Users/damon/workspace/developer/temp1/minicode-agent
+uv tool install -e .
 cd /path/to/repo
 minicode
 ```

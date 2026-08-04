@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from minicode_agent.execution import ShellBackend
 from minicode_agent.security import PermissionPolicy, Workspace
 from minicode_agent.tools.filesystem import (
     EditFileTool,
@@ -16,9 +17,15 @@ from minicode_agent.tools.shell import RunShellTool
 def create_default_registry(
     root: Path,
     policy: PermissionPolicy | None = None,
+    shell: ShellBackend | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(Workspace(root), policy)
-    for tool in (ReadFileTool(), ListFilesTool(), SearchTextTool(), EditFileTool(), RunShellTool()):
+    for tool in (
+        ReadFileTool(),
+        ListFilesTool(),
+        SearchTextTool(),
+        EditFileTool(),
+        RunShellTool(shell),
+    ):
         registry.register(tool)
     return registry
-

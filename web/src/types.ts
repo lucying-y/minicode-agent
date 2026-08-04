@@ -44,6 +44,11 @@ export type Health = {
   status: "ok";
   model: string;
   default_workspace: string;
+  platform: "windows" | "posix";
+  operating_system: string;
+  shell: "powershell" | "posix";
+  shell_name: string;
+  shell_version: string | null;
 };
 
 export type CreateRunInput = {

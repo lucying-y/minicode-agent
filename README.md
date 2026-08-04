@@ -30,7 +30,9 @@ an agent framework.
 
 ## Quick start
 
-Python 3.12+ and [uv](https://docs.astral.sh/uv/) are required.
+Python 3.12+ and [uv](https://docs.astral.sh/uv/) are required. The Web Console also requires
+Node.js 20.19+ (Node.js 22 LTS is recommended). macOS, Linux, and native Windows PowerShell are
+supported.
 
 ```bash
 uv sync --all-groups
@@ -40,13 +42,46 @@ uv run minicode demo --workspace .
 The demo does not call an external model. It performs a scripted tool call, writes its readable
 trace to `.minicode/traces.jsonl`, and records its timeline in `.minicode/runs.db`.
 
+### Native Windows PowerShell
+
+Windows 10/11 works without WSL or Git Bash. MiniCode prefers PowerShell 7 (`pwsh.exe`) and falls
+back to Windows PowerShell 5.1 (`powershell.exe`). Shell tool calls, the Web demo, and evaluation
+verification all use that explicit backend instead of an implicit `cmd.exe` parent shell.
+
+Run the initial setup from PowerShell:
+
+```powershell
+git clone https://github.com/anqi399/minicode-agent.git
+Set-Location minicode-agent
+uv sync --all-groups
+
+Set-Location web
+npm ci
+npm run build
+Set-Location ..
+
+Copy-Item .env.example .env
+notepad .env
+```
+
+Then start either surface with a native Windows path:
+
+```powershell
+uv run minicode chat --workspace "C:\Users\damon\projects\demo"
+uv run minicode web --workspace "C:\Users\damon\projects\demo" --port 8000
+```
+
+PowerShell output is normalized to UTF-8, paths with spaces or non-ASCII characters are supported,
+and a timed-out command terminates its process tree. Commands still run with the current Windows
+user's permissions, so approvals and the deny list must not be treated as an OS sandbox.
+
 ### Web Console
 
 Build the frontend once, then start the local console with the scripted provider:
 
 ```bash
 cd web
-npm install
+npm ci
 npm run build
 cd ..
 uv run minicode web --demo --workspace /path/to/repo
@@ -98,7 +133,7 @@ the session. `/clear` closes the current run and starts a new one with empty con
 To use the shorter `minicode` command from any current directory, install this checkout once:
 
 ```bash
-uv tool install -e /absolute/path/to/minicode-agent
+uv tool install -e .
 cd /path/to/repo
 minicode
 ```

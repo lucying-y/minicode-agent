@@ -38,6 +38,7 @@ async def test_read_and_search_are_workspace_scoped(tmp_path: Path) -> None:
 
 async def test_sensitive_files_are_hidden_and_blocked(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
+    (tmp_path / ".ENV").write_text("API_KEY=uppercase-secret\n", encoding="utf-8")
     (tmp_path / ".env.example").write_text("API_KEY=replace-me\n", encoding="utf-8")
     (tmp_path / "app.py").write_text("value = 42\n", encoding="utf-8")
     registry = create_default_registry(tmp_path)
@@ -48,6 +49,9 @@ async def test_sensitive_files_are_hidden_and_blocked(tmp_path: Path) -> None:
     secret = await registry.execute(
         ToolCall(id="2", name="read_file", arguments={"path": ".env"})
     )
+    uppercase_secret = await registry.execute(
+        ToolCall(id="uppercase", name="read_file", arguments={"path": ".ENV"})
+    )
     template = await registry.execute(
         ToolCall(id="3", name="read_file", arguments={"path": ".env.example"})
     )
@@ -55,6 +59,7 @@ async def test_sensitive_files_are_hidden_and_blocked(tmp_path: Path) -> None:
     assert ".env" not in listed.content.splitlines()
     assert ".env.example" in listed.content.splitlines()
     assert secret.is_error
+    assert uppercase_secret.is_error
     assert "sensitive path is blocked" in secret.content
     assert not template.is_error
 
@@ -119,7 +124,11 @@ async def test_shell_requires_approval_and_blocks_high_risk_commands(tmp_path: P
     registry = create_default_registry(tmp_path, PermissionPolicy(approver))
 
     safe = await registry.execute(
-        ToolCall(id="1", name="run_shell", arguments={"command": "printf 'ok'"})
+        ToolCall(
+            id="1",
+            name="run_shell",
+            arguments={"command": 'python -c "print(\'ok\', end=\'\')"'},
+        )
     )
     dangerous = await registry.execute(
         ToolCall(id="2", name="run_shell", arguments={"command": "rm -rf build"})
@@ -130,6 +139,21 @@ async def test_shell_requires_approval_and_blocks_high_risk_commands(tmp_path: P
     assert safe.metadata["exit_code"] == 0
     assert dangerous.is_error
     assert "blocked high-risk pattern" in dangerous.content
+
+    for command in (
+        "Remove-Item build -Recurse -Force",
+        "rm build -r -fo",
+        "cmd.exe /c rmdir /s /q build",
+        "Format-Volume -DriveLetter D",
+        "pwsh -EncodedCommand ZQBjAGgAbwA=",
+        "Invoke-Expression $command",
+        "Start-Process pwsh -Verb RunAs",
+    ):
+        blocked = await registry.execute(
+            ToolCall(id=command, name="run_shell", arguments={"command": command})
+        )
+        assert blocked.is_error, command
+        assert "blocked high-risk pattern" in blocked.content
 
 
 async def test_registry_returns_structured_errors(tmp_path: Path) -> None:
@@ -174,14 +198,20 @@ async def test_shell_reports_failure_and_timeout(tmp_path: Path) -> None:
     registry = create_default_registry(tmp_path, PermissionPolicy(StaticApprover(True)))
 
     failed = await registry.execute(
-        ToolCall(id="1", name="run_shell", arguments={"command": "printf 'bad'; exit 3"})
+        ToolCall(
+            id="1",
+            name="run_shell",
+            arguments={
+                "command": 'python -c "import sys; print(\'bad\', end=\'\'); sys.exit(3)"'
+            },
+        )
     )
     timed_out = await registry.execute(
         ToolCall(
             id="2",
             name="run_shell",
             arguments={
-                "command": "python3 -c 'import time; time.sleep(2)'",
+                "command": 'python -c "import time; time.sleep(2)"',
                 "timeout_seconds": 1,
             },
         )

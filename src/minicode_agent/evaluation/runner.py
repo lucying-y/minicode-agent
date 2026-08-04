@@ -1,6 +1,5 @@
 """Execute coding tasks in isolated evaluation directories."""
 
-import asyncio
 import json
 import os
 from datetime import UTC, datetime
@@ -8,6 +7,7 @@ from pathlib import Path
 from time import perf_counter
 
 from minicode_agent.evaluation.models import EvalReport, EvalResult, EvalTask, EvalTaskSuite
+from minicode_agent.execution import ShellBackend, default_shell, platform_system_prompt
 from minicode_agent.models.base import ModelProvider
 from minicode_agent.persistence import JsonlTraceSink, SqliteCheckpointStore
 from minicode_agent.runtime import AgentConfig, AgentRuntime, ToolCall
@@ -38,11 +38,13 @@ class EvaluationRunner:
         suite: EvalTaskSuite,
         output_dir: Path,
         config: AgentConfig | None = None,
+        shell: ShellBackend | None = None,
     ) -> None:
         self.model = model
         self.model_name = model_name
         self.suite = suite
         self.output_dir = output_dir.resolve()
+        self.shell = shell or default_shell()
         self.config = config or AgentConfig(max_steps=12)
 
     async def run(self) -> EvalReport:
@@ -60,11 +62,24 @@ class EvaluationRunner:
         workspace_path.mkdir(parents=True, exist_ok=True)
         workspace = Workspace(workspace_path)
         self._write_fixture(workspace, task)
+        runtime_config = self.config.model_copy(
+            update={
+                "system_prompt": platform_system_prompt(
+                    self.config.system_prompt,
+                    self.shell,
+                    workspace.root,
+                )
+            }
+        )
 
         runtime = AgentRuntime(
             self.model,
-            create_default_registry(workspace.root, PermissionPolicy(EvaluationApprover())),
-            config=self.config,
+            create_default_registry(
+                workspace.root,
+                PermissionPolicy(EvaluationApprover()),
+                self.shell,
+            ),
+            config=runtime_config,
             trace=JsonlTraceSink(workspace.root / ".minicode" / "traces.jsonl"),
             checkpoint=SqliteCheckpointStore(workspace.root / ".minicode" / "checkpoints.db"),
         )
@@ -95,32 +110,19 @@ class EvaluationRunner:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
 
-    @staticmethod
-    async def _verify(workspace: Workspace, task: EvalTask) -> tuple[int | None, str]:
+    async def _verify(self, workspace: Workspace, task: EvalTask) -> tuple[int | None, str]:
         environment = os.environ.copy()
         for name in list(environment):
             if name.startswith("COV_CORE_") or name == "COVERAGE_PROCESS_START":
                 environment.pop(name)
-        process = await asyncio.create_subprocess_shell(
+        result = await self.shell.run(
             task.verify_command,
             cwd=workspace.root,
-            env=environment,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            timeout_seconds=task.verify_timeout_seconds,
+            max_chars=8_000,
+            environment=environment,
         )
-        try:
-            output, _ = await asyncio.wait_for(
-                process.communicate(),
-                timeout=task.verify_timeout_seconds,
-            )
-        except TimeoutError:
-            process.kill()
-            await process.communicate()
-            return None, f"verification timed out after {task.verify_timeout_seconds}s"
-        text = output.decode("utf-8", errors="replace")
-        if len(text) > 8_000:
-            text = text[:8_000] + "\n<output truncated>"
-        return process.returncode, text
+        return result.exit_code, result.output
 
     def _write_report(self, started_at: datetime, results: list[EvalResult]) -> EvalReport:
         passed = sum(result.passed for result in results)

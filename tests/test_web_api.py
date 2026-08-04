@@ -48,11 +48,13 @@ async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         health = await client.get("/api/health")
-        assert health.json() == {
-            "status": "ok",
-            "model": "fake-model",
-            "default_workspace": str(tmp_path),
-        }
+        health_data = health.json()
+        assert health_data["status"] == "ok"
+        assert health_data["model"] == "fake-model"
+        assert health_data["default_workspace"] == str(tmp_path)
+        assert health_data["platform"] in {"windows", "posix"}
+        assert health_data["shell"] in {"powershell", "posix"}
+        assert health_data["shell_name"]
 
         created = await client.post(
             "/api/runs",
@@ -152,6 +154,9 @@ async def test_web_publishes_streaming_model_output(tmp_path: Path) -> None:
         assert "".join(deltas) == "streamed web response"
         assert events[-2]["event_type"] == "model_response"
         assert events[-1]["event_type"] == "run_finished"
+        first_request, _ = model.requests[0]
+        assert "Runtime environment:" in first_request[0].content
+        assert str(tmp_path) in first_request[0].content
 
     await manager.shutdown()
 

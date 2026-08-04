@@ -73,3 +73,8 @@ class HealthView(BaseModel):
     status: Literal["ok"] = "ok"
     model: str
     default_workspace: str
+    platform: Literal["windows", "posix"]
+    operating_system: str
+    shell: Literal["powershell", "posix"]
+    shell_name: str
+    shell_version: str | None

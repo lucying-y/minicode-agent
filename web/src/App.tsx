@@ -708,8 +708,11 @@ export default function App() {
           <div className="brand-name">MiniCode <span>Console</span></div>
         </div>
         <div className="topbar-actions">
-          <div className={`connection-state ${health ? "online" : "offline"}`}>
-            <span />{health?.model || (loading ? "连接中" : "未连接")}
+          <div
+            className={`connection-state ${health ? "online" : "offline"}`}
+            title={health ? `${health.operating_system} · ${health.shell_name}${health.shell_version ? ` ${health.shell_version}` : ""}` : undefined}
+          >
+            <span />{health ? `${health.model} · ${health.shell_name}` : (loading ? "连接中" : "未连接")}
           </div>
           <button className="icon-button" onClick={() => void refreshRuns()} title="刷新运行"><RefreshCw size={17} /></button>
           <button className="button primary" onClick={() => setNewRunOpen(true)}><Plus size={17} />新任务</button>

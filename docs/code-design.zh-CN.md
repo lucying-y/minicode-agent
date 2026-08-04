@@ -147,6 +147,8 @@ src/minicode_agent/
 │   ├── base.py                    # ModelProvider 协议
 │   ├── fake.py                    # 可预测的测试模型
 │   └── openai_compatible.py       # OpenAI 兼容接口适配
+├── execution/
+│   └── shell.py                   # POSIX/PowerShell 检测、执行、编码和超时终止
 ├── tools/
 │   ├── base.py                    # Tool 抽象类
 │   ├── registry.py                # 注册、Schema、校验、权限、执行
@@ -475,12 +477,23 @@ Agent 进程崩溃。
 Shell 标准错误会合并到标准输出；非零退出码会令结果的 `is_error` 为 `true`。输出超过上限时
 会截断，防止巨量日志直接占满下一轮模型上下文。
 
+`run_shell` 不再依赖 `create_subprocess_shell()` 猜测系统命令解释器，而是通过统一的
+`ShellBackend` 显式启动 Shell：macOS/Linux 使用可发现的 POSIX `sh`；Windows 优先使用
+PowerShell 7 `pwsh.exe`，没有 PowerShell 7 时回退到 Windows PowerShell 5.1
+`powershell.exe`。CLI、Web Demo、普通 Agent 工具和 Evaluation 校验共用同一个 Backend。
+
+PowerShell Backend 会设置 UTF-8 输入输出、使用 `-NoProfile` 和 `-NonInteractive`，并把 Shell
+名称、版本和命令语言加入系统提示。模型因此知道应该使用 PowerShell，而不是先生成 Bash 命令再
+依靠失败结果猜测平台。命令超时时，POSIX 使用进程组终止，Windows 使用精确 PID 调用
+`taskkill /T /F` 终止 PowerShell 及其子进程。
+
 ## 9. 权限与安全边界
 
 ### 9.1 工作区路径限制
 
 [`Workspace`](../src/minicode_agent/security/workspace.py) 会把根目录和目标路径都转换成规范化
-绝对路径，再用共同路径判断目标是否仍位于工作区内。
+绝对路径，再通过 `relative_to()` 判断目标是否仍位于工作区内。跨盘符路径和工作区外路径统一
+转换成 `WorkspaceViolation`。
 
 因此下面的读取会被拒绝：
 
@@ -492,6 +505,10 @@ resolved = /projects/private.txt
 
 符号链接也会在 `resolve()` 时解析。如果工作区内的链接指向工作区外，最终路径仍会被判定为
 越界。
+
+Windows 还会拒绝盘符相对路径（例如 `C:private.txt`）、NTFS Alternate Data Stream，以及
+`CON`、`NUL`、`PRN`、`COM1` 等设备名。敏感路径匹配使用大小写折叠，因此 `.GIT`、`.Env` 和
+`.SSH` 在大小写不敏感文件系统上不能绕过规则。
 
 ### 9.2 权限策略
 
@@ -511,7 +528,9 @@ Web Console 始终使用 `_WebApprover`，当前没有暴露审批模式开关�
 和只读模式。
 
 当前拒绝规则是对命令字符串中的危险片段进行检查，例如 `rm -rf`、`sudo`、`mkfs`、
-`git reset --hard` 和 `git clean -fd`。
+`git reset --hard` 和 `git clean -fd`。Windows 还覆盖 `Remove-Item -Recurse -Force`、
+`rmdir /s`、磁盘格式化、关机重启、`Invoke-Expression`、PowerShell EncodedCommand 和管理员提权
+启动等高风险形式。
 
 ### 9.3 为什么这不是沙箱
 
@@ -720,7 +739,7 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 
 ## 15. 测试策略
 
-项目当前有 51 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
+项目当前有 61 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
 
 - Agent Runtime：使用 Fake Provider 和 Stub Tool；
 - HTTP Provider：使用 `httpx.MockTransport`，不发送真实请求；
@@ -732,6 +751,11 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 - 交互会话：验证跨轮消息、累计 Token、会话命令和 `/clear` 后的新 Run；
 - Evaluation：使用临时题目和确定性校验命令；
 - Web API：使用进程内 ASGI 客户端验证创建、审批、事件、停止限制和恢复。
+- 平台执行：验证 PowerShell 参数、UTF-8 包装、Shell 检测、Windows 路径规则以及带空格和中文的
+  工作区；Windows 专项用例会实际运行 PowerShell 并验证失败退出码与进程树超时。
+
+GitHub Actions 在 Ubuntu、macOS 和 Windows 上运行后端测试，并在 Ubuntu 和 Windows 上执行
+前端类型检查与构建。只有 `windows-latest` 才会运行标记为原生 Windows 的 PowerShell 集成测试。
 
 真实模型评测用于验证完整链路，但不能替代单元测试，因为模型输出具有成本、延迟和不确定性。
 
