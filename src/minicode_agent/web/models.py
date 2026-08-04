@@ -48,6 +48,7 @@ class RunView(BaseModel):
 
     run_id: str
     source: Literal["cli", "web"]
+    mode: Literal["task", "chat"]
     task: str
     workspace: str
     model_name: str

@@ -254,6 +254,7 @@ class RunManager:
         return RunView(
             run_id=run.run_id,
             source=run.source,
+            mode=run.mode,
             task=run.task,
             workspace=run.workspace,
             model_name=run.model_name,

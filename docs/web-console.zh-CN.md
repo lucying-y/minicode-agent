@@ -134,6 +134,11 @@ uv run minicode web --port 8001 --workspace /path/to/repository
 Trace 和 Checkpoint。来源徽标会标明任务由 `CLI` 还是 `WEB` 发起；CLI 任务只用于观察，不能
 从网页审批或恢复。CLI 等待审批时，页面会提示回到原终端处理。
 
+`minicode chat` 创建的记录还会显示 `CHAT` 徽标。时间线会连续展示 `session_started`、每条
+`user_message`、模型与工具事件、`session_waiting_input` 和最终的 `session_finished`。状态为
+“等待输入”时说明 CLI 会话仍然存在，下一条消息仍会进入同一个 Run 和同一份模型上下文。
+达到累计 Token 上限时会显示 `session_limit_reached`，此时需要在 CLI 使用 `/clear` 新建会话。
+
 移动端会把运行列表变成侧边抽屉，并在待审批时把审批面板固定在视口底部，避免必须滚动到页面
 末尾才能批准操作。
 

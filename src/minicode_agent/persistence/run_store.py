@@ -21,6 +21,7 @@ class StoredRun(BaseModel):
 
     run_id: str
     source: Literal["cli", "web"]
+    mode: Literal["task", "chat"]
     task: str
     workspace: str
     model_name: str
@@ -136,6 +137,15 @@ class SqliteRunStore:
             if cursor.rowcount == 0:
                 raise KeyError(f"run not found: {run_id}")
 
+    def update_task(self, run_id: str, task: str) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runs SET task = ?, updated_at = ? WHERE run_id = ?",
+                (task, _now(), run_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"run not found: {run_id}")
+
     def get_run(self, run_id: str) -> StoredRun | None:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
@@ -226,7 +236,12 @@ class SqliteRunStore:
         timestamp: str,
     ) -> None:
         status: str | None = None
-        if event_type in {"run_started", "run_resumed", "approval_resolved"}:
+        if event_type in {
+            "run_started",
+            "run_resumed",
+            "approval_resolved",
+            "user_message",
+        }:
             status = "running"
         elif event_type == "run_queued" or event_type == "run_resume_queued":
             status = "queued"
@@ -236,6 +251,12 @@ class SqliteRunStore:
             status = str(data["status"])
         elif event_type == "web_error":
             status = "failed"
+        elif event_type in {"session_started", "session_waiting_input"}:
+            status = "idle"
+        elif event_type == "session_finished":
+            status = "completed"
+        elif event_type == "session_limit_reached":
+            status = "token_limit"
 
         if event_type == "model_response":
             usage = data.get("usage", {})
@@ -294,6 +315,7 @@ class SqliteRunStore:
         return StoredRun(
             run_id=row["run_id"],
             source=row["source"],
+            mode=config.get("mode", "task"),
             task=row["task"],
             workspace=row["workspace"],
             model_name=row["model_name"],

@@ -61,6 +61,7 @@ async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
         assert created.status_code == 202
         run_id = created.json()["run_id"]
         assert created.json()["source"] == "web"
+        assert created.json()["mode"] == "task"
         assert created.json()["model_name"] == "fake-model"
 
         await _wait_for_status(manager, run_id, "waiting_approval")
@@ -174,6 +175,7 @@ async def test_web_discovers_external_cli_run_and_streams_its_events(tmp_path: P
     listed = manager.list_runs()
     assert len(listed) == 1
     assert listed[0].source == "cli"
+    assert listed[0].mode == "task"
     assert listed[0].model_name == "cli-model"
 
     subscription = manager.subscribe("cli-run", after=1)

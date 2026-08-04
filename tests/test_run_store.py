@@ -63,6 +63,26 @@ def test_separate_store_instances_share_new_runs_and_events(tmp_path: Path) -> N
     assert reader.list_events("external-run")[0]["event_type"] == "run_queued"
 
 
+def test_run_store_projects_chat_mode_and_idle_status(tmp_path: Path) -> None:
+    store = SqliteRunStore(tmp_path)
+    store.create_run(
+        run_id="chat-run",
+        source="cli",
+        task="Interactive CLI session",
+        model_name="test-model",
+        config={"mode": "chat", "max_steps": 12},
+        status="idle",
+    )
+    store.append_event("chat-run", "session_started", {"task": "Interactive CLI session"})
+    store.update_task("chat-run", "inspect the repository")
+
+    run = store.get_run("chat-run")
+    assert run is not None
+    assert run.mode == "chat"
+    assert run.status == "idle"
+    assert run.task == "inspect the repository"
+
+
 def test_recorder_batches_model_deltas_and_preserves_jsonl_trace(tmp_path: Path) -> None:
     store = SqliteRunStore(tmp_path)
     _create_run(store)

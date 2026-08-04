@@ -22,26 +22,35 @@ class ContextManager:
             return list(messages)
 
         base = list(messages[:2])
-        blocks = self._conversation_blocks(messages[2:])
+        latest_user_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, 1, -1)
+                if messages[index].role == "user"
+            ),
+            len(messages),
+        )
+        current_turn = list(messages[latest_user_index:])
+        blocks = self._conversation_blocks(messages[2:latest_user_index])
         kept: list[list[Message]] = []
 
         for block in reversed(blocks):
             ordered_kept = [message for existing in reversed(kept) for message in existing]
-            candidate = base + block + ordered_kept
+            candidate = base + block + ordered_kept + current_turn
             if self.estimate_tokens(candidate) > self.max_tokens:
                 break
             kept.append(block)
 
         ordered = [message for block in reversed(kept) for message in block]
-        omitted = len(messages) - len(base) - len(ordered)
+        omitted = len(messages) - len(base) - len(ordered) - len(current_turn)
         if omitted:
             marker = Message(
                 role="system",
                 content=f"[Context manager omitted {omitted} older execution messages.]",
             )
-            if self.estimate_tokens(base + [marker] + ordered) <= self.max_tokens:
-                return base + [marker] + ordered
-        return base + ordered
+            if self.estimate_tokens(base + [marker] + ordered + current_turn) <= self.max_tokens:
+                return base + [marker] + ordered + current_turn
+        return base + ordered + current_turn
 
     @staticmethod
     def _conversation_blocks(messages: list[Message]) -> list[list[Message]]:

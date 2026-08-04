@@ -28,6 +28,7 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 - 使用只追加的 JSONL 轨迹记录模型响应、工具结果、Token 用量、耗时和最终状态。
 - 使用 SQLite 保存一致执行边界上的消息、累计用量和轨迹序号，支持断点恢复。
 - 使用工作区级 SQLite Run Store，让 CLI 与 Web 跨进程共享运行摘要和时间线。
+- 提供持久化交互式 CLI，在同一会话中保留多轮上下文并支持斜杠命令。
 - 提供可重复运行的仓库任务评测，通过确定性校验命令判断结果并生成 JSON 报告。
 - 提供确定性的 Fake Provider，用于离线测试和演示。
 - 提供本地 React Web Console，通过 FastAPI、SSE、网页审批和 Checkpoint 恢复观察与控制任务。
@@ -90,6 +91,37 @@ MINICODE_MODEL=your-model-name
 ```
 
 API Key 从本地 `.env` 文件加载。该文件已被 Git 忽略，不需要写入源代码或命令行参数。
+
+### 交互式 CLI
+
+进入需要操作的项目目录后，可以启动一个持续会话。`minicode` 不带子命令时等价于
+`minicode chat`：
+
+```bash
+uv run minicode chat --workspace /path/to/repo
+```
+
+会话中的多次输入共用同一个 `run_id`、模型消息历史、累计 Token、审批器、Checkpoint 和 Web
+时间线。Chat 模式下，`--max-steps` 表示每条用户消息最多允许的模型步数，而总 Token 上限作用于
+整个会话。
+
+| 命令 | 作用 |
+| --- | --- |
+| `/help` | 显示命令帮助 |
+| `/status` | 显示 Run ID、状态、累计步数、Token 和消息数 |
+| `/history` | 显示当前会话中的用户消息 |
+| `/clear` | 结束当前 Run，创建一个没有旧上下文的新 Run |
+| `/exit`、`/quit` | 退出 MiniCode；直接输入 `exit` 或 `quit` 也可以 |
+
+如果希望在任意项目目录直接输入 `minicode`，可以安装一次当前源码：
+
+```bash
+uv tool install -e /Users/damon/workspace/developer/temp1/minicode-agent
+cd /path/to/repo
+minicode
+```
+
+安装后的命令读取 Shell 中的 `MINICODE_*` 环境变量，或者启动目录下的 `.env`。
 
 运行一个代码仓库任务：
 
@@ -171,7 +203,7 @@ uv run pytest --cov
 
 测试使用临时工作区、模拟 HTTP 响应和确定性模型，覆盖 Agent Loop、运行限制、上下文选择、
 路径逃逸防护、人工确认、文件工具、命令失败与超时、Checkpoint 恢复、模型协议转换、CLI
-演示、仓库任务评测和 JSONL 事件顺序。
+演示、交互式多轮上下文、仓库任务评测和 JSONL 事件顺序。
 
 ## 项目结构
 

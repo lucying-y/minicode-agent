@@ -12,6 +12,7 @@ export type Approval = {
 export type Run = {
   run_id: string;
   source: "cli" | "web";
+  mode: "task" | "chat";
   task: string;
   workspace: string;
   model_name: string;

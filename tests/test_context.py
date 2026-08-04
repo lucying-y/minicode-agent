@@ -41,3 +41,18 @@ def test_context_drops_old_complete_blocks_and_keeps_latest_block() -> None:
     assert any("omitted" in message.content for message in prepared)
     assert prepared[-2:] == messages[-2:]
     assert all(message.tool_call_id != "old" for message in prepared)
+
+
+def test_context_keeps_latest_interactive_user_turn() -> None:
+    messages = [
+        Message(role="system", content="system"),
+        Message(role="user", content="initial task"),
+        Message(role="assistant", content="x" * 1000),
+        Message(role="user", content="latest follow-up"),
+    ]
+
+    prepared = ContextManager(128).prepare(messages)
+
+    assert prepared[0:2] == messages[0:2]
+    assert prepared[-1] == messages[-1]
+    assert messages[2] not in prepared

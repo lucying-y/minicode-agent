@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from minicode_agent.models import FakeModelProvider
+from minicode_agent.persistence import SqliteCheckpointStore
 from minicode_agent.runtime import (
     AgentConfig,
     AgentRuntime,
@@ -135,3 +138,68 @@ async def test_runtime_forwards_streaming_model_deltas() -> None:
     assert result.status is RunStatus.COMPLETED
     assert "".join(delta for _, _, delta in deltas) == "streamed response"
     assert {(run_id, step) for run_id, step, _ in deltas} == {("stream-run", 1)}
+
+
+async def test_runtime_preserves_context_across_interactive_turns(tmp_path: Path) -> None:
+    checkpoint_store = SqliteCheckpointStore(tmp_path / "checkpoints.db")
+    model = FakeModelProvider(
+        [
+            ModelResponse(
+                content="first answer",
+                usage=TokenUsage(input_tokens=5, output_tokens=2),
+            ),
+            ModelResponse(
+                content="second answer",
+                usage=TokenUsage(input_tokens=7, output_tokens=3),
+            ),
+        ]
+    )
+    runtime = AgentRuntime(model, StubTools(), checkpoint=checkpoint_store)
+    runtime.start_session("chat-run")
+
+    first = await runtime.continue_conversation("chat-run", "first question", max_steps=2)
+    second = await runtime.continue_conversation("chat-run", "follow up", max_steps=2)
+
+    assert first.steps == 1
+    assert second.steps == 2
+    assert second.usage.total_tokens == 17
+    second_request, _ = model.requests[1]
+    assert [(message.role, message.content) for message in second_request[-3:]] == [
+        ("user", "first question"),
+        ("assistant", "first answer"),
+        ("user", "follow up"),
+    ]
+    checkpoint = checkpoint_store.load("chat-run")
+    assert checkpoint is not None
+    assert checkpoint.status == "idle"
+    assert checkpoint.steps == 2
+
+    runtime.end_session("chat-run")
+    closed = checkpoint_store.load("chat-run")
+    assert closed is not None
+    assert closed.status == RunStatus.COMPLETED.value
+
+
+async def test_interactive_session_marks_exact_token_limit(tmp_path: Path) -> None:
+    checkpoint_store = SqliteCheckpointStore(tmp_path / "checkpoints.db")
+    runtime = AgentRuntime(
+        FakeModelProvider(
+            [
+                ModelResponse(
+                    content="done",
+                    usage=TokenUsage(input_tokens=3, output_tokens=2),
+                )
+            ]
+        ),
+        StubTools(),
+        AgentConfig(max_total_tokens=5),
+        checkpoint=checkpoint_store,
+    )
+    runtime.start_session("limited-chat")
+
+    result = await runtime.continue_conversation("limited-chat", "answer once")
+
+    assert result.status is RunStatus.COMPLETED
+    checkpoint = checkpoint_store.load("limited-chat")
+    assert checkpoint is not None
+    assert checkpoint.status == RunStatus.TOKEN_LIMIT.value

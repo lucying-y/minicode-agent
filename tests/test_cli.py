@@ -17,6 +17,12 @@ def test_parser_accepts_run_configuration() -> None:
     assert args.task == "fix the tests"
     assert args.workspace == Path("/tmp/project")
     assert args.max_steps == 5
+    assert args.max_total_tokens == 100_000
+
+    chat_args = build_parser().parse_args(["chat", "--workspace", "/tmp/chat"])
+    assert chat_args.command == "chat"
+    assert chat_args.workspace == Path("/tmp/chat")
+    assert build_parser().parse_args([]).command is None
 
     resume_args = build_parser().parse_args(["resume", "run-123", "--max-steps", "20"])
     assert resume_args.command == "resume"
@@ -74,6 +80,93 @@ async def test_run_reports_missing_environment_configuration(
 
     assert exit_code == 2
     assert "Copy .env.example to .env" in capsys.readouterr().out
+
+
+async def test_chat_keeps_context_and_clear_starts_new_run(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    fake_model = FakeModelProvider(
+        [
+            ModelResponse(content="first answer"),
+            ModelResponse(content="second answer"),
+        ],
+        streaming=True,
+        stream_chunk_size=4,
+    )
+    answers = iter(
+        [
+            "first question",
+            "follow up",
+            "/status",
+            "/history",
+            "/clear",
+            "/exit",
+        ]
+    )
+    monkeypatch.setenv("MINICODE_API_KEY", "test-key")
+    monkeypatch.setenv("MINICODE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("MINICODE_MODEL", "fake-model")
+    monkeypatch.setattr(
+        "minicode_agent.cli.OpenAICompatibleProvider",
+        lambda **kwargs: fake_model,
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+
+    exit_code = await async_main(["chat", "--workspace", str(tmp_path)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "MiniCode Agent" in output
+    assert "first answer" in output
+    assert "second answer" in output
+    assert "1. first question" in output
+    assert "2. follow up" in output
+    assert "Context cleared. New Run ID:" in output
+    second_request, _ = fake_model.requests[1]
+    assert [(message.role, message.content) for message in second_request[-3:]] == [
+        ("user", "first question"),
+        ("assistant", "first answer"),
+        ("user", "follow up"),
+    ]
+    runs = SqliteRunStore(tmp_path).list_runs()
+    assert len(runs) == 2
+    first_run = next(run for run in runs if run.task == "first question")
+    assert first_run.mode == "chat"
+    assert first_run.status == "completed"
+    event_types = [
+        event["event_type"]
+        for event in SqliteRunStore(tmp_path).list_events(first_run.run_id)
+    ]
+    assert event_types.count("user_message") == 2
+    assert "session_waiting_input" in event_types
+    assert event_types[-1] == "session_finished"
+
+
+async def test_bare_cli_command_enters_chat_in_current_directory(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MINICODE_API_KEY", "test-key")
+    monkeypatch.setenv("MINICODE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("MINICODE_MODEL", "fake-model")
+    monkeypatch.setattr(
+        "minicode_agent.cli.OpenAICompatibleProvider",
+        lambda **kwargs: FakeModelProvider([]),
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "/exit")
+
+    exit_code = await async_main([])
+
+    assert exit_code == 0
+    assert f"Workspace: {tmp_path}" in capsys.readouterr().out
+    runs = SqliteRunStore(tmp_path).list_runs()
+    assert len(runs) == 1
+    assert runs[0].mode == "chat"
+    assert runs[0].status == "completed"
 
 
 async def test_console_and_always_approvers(monkeypatch) -> None:

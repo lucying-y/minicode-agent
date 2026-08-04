@@ -18,7 +18,14 @@ from minicode_agent.persistence import (
     SqliteCheckpointStore,
     SqliteRunStore,
 )
-from minicode_agent.runtime import AgentConfig, AgentRuntime, ModelResponse, RunStatus, ToolCall
+from minicode_agent.runtime import (
+    AgentConfig,
+    AgentRuntime,
+    ModelResponse,
+    RunResult,
+    RunStatus,
+    ToolCall,
+)
 from minicode_agent.security import ApprovalHandler, PermissionLevel, PermissionPolicy, Workspace
 from minicode_agent.tools import create_default_registry
 
@@ -74,9 +81,42 @@ class RecordingApprover:
         return approved
 
 
+class ConsoleDeltaWriter:
+    """Persist model deltas while displaying them once in an interactive terminal."""
+
+    def __init__(self, recorder: PersistentRunRecorder) -> None:
+        self.recorder = recorder
+        self.current_step: int | None = None
+        self.printed = False
+
+    def begin_turn(self) -> None:
+        self.current_step = None
+        self.printed = False
+
+    def on_model_delta(self, run_id: str, step: int, delta: str) -> None:
+        self.recorder.on_model_delta(run_id, step, delta)
+        if self.current_step is not None and self.current_step != step and self.printed:
+            print()
+        self.current_step = step
+        self.printed = True
+        print(delta, end="", flush=True)
+
+    def finish_turn(self, result: RunResult) -> None:
+        self.recorder.flush_model_delta()
+        if self.printed:
+            print()
+        elif result.output:
+            print(result.output)
+        elif result.error:
+            print(result.error)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="minicode", description="A small coding-agent runtime")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command")
+
+    chat = subparsers.add_parser("chat", help="enter a persistent interactive coding session")
+    _add_runtime_options(chat)
 
     demo = subparsers.add_parser("demo", help="run a deterministic demo without an API key")
     demo.add_argument("--workspace", type=Path, default=Path.cwd())
@@ -108,6 +148,7 @@ def _add_runtime_options(command: argparse.ArgumentParser) -> None:
     command.add_argument("--workspace", type=Path, default=Path.cwd())
     command.add_argument("--max-steps", type=int, default=12)
     command.add_argument("--max-context-tokens", type=int, default=32_000)
+    command.add_argument("--max-total-tokens", type=int, default=100_000)
     command.add_argument(
         "--yes",
         action="store_true",
@@ -195,6 +236,7 @@ async def run_model_command(args: argparse.Namespace) -> int:
     config = AgentConfig(
         max_steps=args.max_steps,
         max_context_tokens=args.max_context_tokens,
+        max_total_tokens=args.max_total_tokens,
     )
     checkpoint_store = SqliteCheckpointStore(_checkpoint_path(workspace))
     store = SqliteRunStore(workspace)
@@ -264,6 +306,153 @@ async def run_model_command(args: argparse.Namespace) -> int:
         f"steps={result.steps} tokens={result.usage.total_tokens}"
     )
     return 0 if result.status is RunStatus.COMPLETED else 1
+
+
+def _print_chat_help() -> None:
+    print(
+        "Commands:\n"
+        "  /help             Show this help\n"
+        "  /status           Show the current session state\n"
+        "  /history          Show user messages in this session\n"
+        "  /clear            Start a new session with empty context\n"
+        "  /exit, /quit      Exit MiniCode\n"
+        "  exit, quit        Exit MiniCode"
+    )
+
+
+async def run_chat_command(args: argparse.Namespace) -> int:
+    """Run a persistent, terminal-driven conversation in one workspace."""
+    model_configuration = _load_model_configuration()
+    if model_configuration is None:
+        return 2
+    api_key, base_url, model_name = model_configuration
+    workspace = Workspace(args.workspace).root
+    checkpoint_store = SqliteCheckpointStore(_checkpoint_path(workspace))
+    store = SqliteRunStore(workspace)
+    provider = OpenAICompatibleProvider(
+        api_key=api_key,
+        base_url=base_url,
+        model=model_name,
+    )
+    base_config = AgentConfig(
+        max_steps=args.max_steps,
+        max_context_tokens=args.max_context_tokens,
+        max_total_tokens=args.max_total_tokens,
+    )
+
+    def create_session() -> tuple[str, AgentRuntime, PersistentRunRecorder, ConsoleDeltaWriter]:
+        run_id = uuid4().hex
+        stored_config = base_config.model_dump() | {"mode": "chat"}
+        store.create_run(
+            run_id=run_id,
+            source="cli",
+            task="Interactive CLI session",
+            model_name=model_name,
+            config=stored_config,
+            status="idle",
+        )
+        recorder = PersistentRunRecorder(JsonlTraceSink(_trace_path(workspace)), store)
+        approver = RecordingApprover(
+            AlwaysApprover() if args.yes else ConsoleApprover(),
+            store,
+            run_id,
+        )
+        delta_writer = ConsoleDeltaWriter(recorder)
+        runtime = AgentRuntime(
+            provider,
+            create_default_registry(workspace, PermissionPolicy(approver)),
+            config=base_config,
+            trace=recorder,
+            checkpoint=checkpoint_store,
+            on_model_delta=delta_writer.on_model_delta,
+        )
+        runtime.start_session(run_id)
+        return run_id, runtime, recorder, delta_writer
+
+    run_id, runtime, recorder, delta_writer = create_session()
+    has_user_message = False
+    print("MiniCode Agent")
+    print(f"Workspace: {workspace}")
+    print(f"Model: {model_name}")
+    print(f"Run ID: {run_id}")
+    print("Type /help for commands. Use /exit, /quit, exit, or quit to leave.\n")
+
+    try:
+        while True:
+            try:
+                raw = await asyncio.to_thread(input, "minicode> ")
+            except EOFError:
+                raw = "/exit"
+            content = raw.strip()
+            if not content:
+                continue
+            command = content.lower()
+            if command in {"/exit", "/quit", "exit", "quit"}:
+                runtime.end_session(run_id)
+                recorder.flush_model_delta()
+                print("Session closed.")
+                return 0
+            if command == "/help":
+                _print_chat_help()
+                continue
+            if command == "/status":
+                checkpoint = checkpoint_store.load(run_id)
+                stored = store.get_run(run_id)
+                if checkpoint is None or stored is None:
+                    print("Session state is unavailable.")
+                    continue
+                print(
+                    f"run_id={run_id} status={stored.status} steps={checkpoint.steps} "
+                    f"tokens={checkpoint.usage.total_tokens} messages={len(checkpoint.messages)}"
+                )
+                continue
+            if command == "/history":
+                checkpoint = checkpoint_store.load(run_id)
+                user_messages = (
+                    [message.content for message in checkpoint.messages if message.role == "user"]
+                    if checkpoint is not None
+                    else []
+                )
+                if not user_messages:
+                    print("No user messages in this session.")
+                else:
+                    for index, message in enumerate(user_messages, start=1):
+                        print(f"{index}. {message}")
+                continue
+            if command == "/clear":
+                runtime.end_session(run_id, reason="cleared")
+                recorder.flush_model_delta()
+                run_id, runtime, recorder, delta_writer = create_session()
+                has_user_message = False
+                print(f"Context cleared. New Run ID: {run_id}")
+                continue
+            if content.startswith("/"):
+                print(f"Unknown command: {content}. Use /help for available commands.")
+                continue
+
+            if not has_user_message:
+                store.update_task(run_id, content)
+                has_user_message = True
+            delta_writer.begin_turn()
+            try:
+                result = await runtime.continue_conversation(
+                    run_id,
+                    content,
+                    max_steps=args.max_steps,
+                )
+            except ValueError as exc:
+                print(str(exc))
+                continue
+            delta_writer.finish_turn(result)
+            if result.usage.total_tokens >= args.max_total_tokens:
+                print("[token_limit] Session limit reached; use /clear to continue.")
+            elif result.status is not RunStatus.COMPLETED:
+                print(f"[{result.status.value}] Continue with another message or use /clear.")
+    finally:
+        recorder.flush_model_delta()
+        close = getattr(provider, "aclose", None)
+        if close is not None:
+            await close()
 
 
 async def run_evaluation_command(args: argparse.Namespace) -> int:
@@ -370,13 +559,18 @@ async def run_web_command(args: argparse.Namespace) -> int:
 
 
 async def async_main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command is None:
+        args = parser.parse_args(["chat"])
     if args.command == "demo":
         return await run_demo(args.workspace)
     if args.command == "eval":
         return await run_evaluation_command(args)
     if args.command == "web":
         return await run_web_command(args)
+    if args.command == "chat":
+        return await run_chat_command(args)
     return await run_model_command(args)
 
 

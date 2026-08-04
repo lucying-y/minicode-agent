@@ -238,8 +238,9 @@ Assistant 调用，否则模型看到的协议会不完整。
 这里的“一步”表示一次模型请求，不表示一次工具调用。一个模型响应可以包含多个工具调用，它们仍然
 属于同一步。
 
-CLI 当前只开放了 `max_steps` 和 `max_context_tokens` 参数；`max_total_tokens` 与
-`stop_on_tool_error` 仍需通过代码配置，这是后续应补齐的配置入口。
+CLI 开放了 `max_steps`、`max_context_tokens` 和 `max_total_tokens` 参数；
+`stop_on_tool_error` 仍需通过代码配置，这是后续应补齐的配置入口。Chat 模式把 `max_steps`
+解释为每条用户消息的步数上限，`max_total_tokens` 则限制整个会话的累计用量。
 
 ### 5.4 RunStatus
 
@@ -346,6 +347,34 @@ sequenceDiagram
     Runtime-->>CLI: RunResult(completed)
     CLI-->>User: 输出结果和 run_id
 ```
+
+### 6.5 交互式会话怎样复用上下文
+
+`minicode chat` 和不带子命令的 `minicode` 会启动一个持续的 CLI 会话。它不是反复调用独立的
+`run(task)`，而是为整个会话只创建一次 `run_id`：
+
+```text
+start_session(run_id)
+  -> 保存 System Message 和 idle Checkpoint
+
+continue_conversation(run_id, user_message)
+  -> 读取同一个 Checkpoint
+  -> 在完整消息历史末尾追加 User Message
+  -> 从累计 steps + 1 继续 Agent Loop
+  -> 保存 Assistant、Tool、累计 Token 和新的 Trace 序号
+  -> 进入 session_waiting_input；达到总 Token 上限时进入 session_limit_reached
+```
+
+每条输入完成时，Runtime 仍会产生一次 `RunResult` 和 `run_finished`，用于描述这一轮是完成、达到
+步数上限还是失败；随后 `session_waiting_input` 把共享摘要切换为 `idle`，表示 CLI 可以继续接收
+下一条消息。退出时记录 `session_finished`，并把最终 Checkpoint 标记为 `completed`。
+
+Chat 的 `--max-steps` 是每条消息的增量上限。例如第一条消息使用 2 步后，第二条消息仍可以再使用
+最多 12 步；Checkpoint 中的 `steps` 则持续累计。总 Token 上限不会按轮重置，达到上限后需要
+使用 `/clear` 创建新会话。
+
+`/clear` 不会在同一历史上删除消息。它会正常结束旧 Run，再创建新的 Run ID 和只有 System
+Message 的 Checkpoint，因此 Web 时间线和审计数据不会出现“历史被悄悄改写”的情况。
 
 ## 7. 模型适配层
 
@@ -539,6 +568,9 @@ estimated_tokens = ceil(serialized_characters / 4)
 1. System Prompt；
 2. 原始用户任务。
 
+在交互式会话中，算法还会把最新一条 User Message 及其之后的 Assistant/Tool 链路作为当前轮次
+锚点保留，避免历史变长后模型反而看不到用户刚刚提出的问题。
+
 后续历史按完整对话块分组：一个 Assistant 消息，以及紧随其后的全部 Tool 消息属于同一个块。
 算法从最新块向旧块添加，直到继续添加会超过预算。若空间允许，还会插入一条系统消息，告诉模型
 有多少条旧执行消息被省略。
@@ -575,6 +607,11 @@ JSONL 表示每一行都是一个完整 JSON 对象。追加写入比维护一�
 | `model_error` | Provider 或上下文准备异常 |
 | `run_resumed` | 从哪个状态和第几步恢复 |
 | `run_finished` | 最终状态、步数、累计 Token 和错误 |
+| `session_started` | 交互式 CLI 会话建立 |
+| `user_message` | 会话中新追加的用户输入 |
+| `session_waiting_input` | 本轮结束，等待下一条输入 |
+| `session_limit_reached` | 会话达到累计 Token 上限，只能退出或清空 |
+| `session_finished` | 用户退出或清空会话 |
 
 每个运行使用独立的 `run_id`，事件通过从 1 递增的 `sequence` 排序。恢复任务时会从 Checkpoint
 保存的轨迹序号继续递增。
@@ -683,7 +720,7 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 
 ## 15. 测试策略
 
-项目当前有 41 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
+项目当前有 48 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
 
 - Agent Runtime：使用 Fake Provider 和 Stub Tool；
 - HTTP Provider：使用 `httpx.MockTransport`，不发送真实请求；
@@ -692,6 +729,7 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 - Checkpoint：使用临时 SQLite 文件；
 - Run Store：验证跨连接可见性、事件排序、摘要投影和流式分片合并；
 - CLI：调用命令入口并检查输出与退出码；
+- 交互会话：验证跨轮消息、累计 Token、会话命令和 `/clear` 后的新 Run；
 - Evaluation：使用临时题目和确定性校验命令；
 - Web API：使用进程内 ASGI 客户端验证创建、审批、事件、停止限制和恢复。
 
@@ -725,7 +763,25 @@ uv run minicode web --demo --workspace /path/to/repository
 `uv run minicode web --workspace /path/to/repository`。详细说明见
 [《Web Console 使用与设计说明》](web-console.zh-CN.md)。
 
-### 16.3 真实 CLI 任务
+### 16.3 交互式 CLI 会话
+
+```bash
+uv run minicode chat --workspace /path/to/repository
+```
+
+也可以直接运行 `uv run minicode`，此时默认使用当前目录作为工作区。进入后连续输入自然语言任务，
+使用 `/status` 查看累计状态，使用 `/history` 查看用户消息，使用 `/clear` 新建无历史会话，使用
+`/exit`、`/quit`、`exit` 或 `quit` 退出。对于可信任务可以在启动时增加 `--yes`。
+
+希望从任意目录直接使用短命令时，可执行一次：
+
+```bash
+uv tool install -e /absolute/path/to/minicode-agent
+```
+
+之后在目标仓库中运行 `minicode` 即可。模型配置需要存在于 Shell 环境变量或启动目录的 `.env`。
+
+### 16.4 真实 CLI 单次任务
 
 ```bash
 uv run minicode run \
@@ -736,7 +792,7 @@ uv run minicode run \
 不要对不可信仓库使用 `--yes`。正常模式下，读取自动允许，写文件和 Shell 命令会显示参数并等待
 人工确认。
 
-### 16.4 恢复 CLI 任务
+### 16.5 恢复 CLI 任务
 
 ```bash
 uv run minicode resume RUN_ID \
@@ -746,7 +802,7 @@ uv run minicode resume RUN_ID \
 
 恢复时必须指向原工作区，因为 Checkpoint 数据库位于该工作区的 `.minicode` 目录。
 
-### 16.5 运行评测和测试
+### 16.6 运行评测和测试
 
 ```bash
 uv run minicode eval --tasks evals/tasks.json

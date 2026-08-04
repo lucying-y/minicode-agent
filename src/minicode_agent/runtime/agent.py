@@ -74,6 +74,103 @@ class AgentRuntime:
         self._save_checkpoint(run_id, task, "running", messages, 0, usage)
         return await self._continue(run_id, task, messages, usage, start_step=1)
 
+    def start_session(self, run_id: str, *, task: str = "Interactive CLI session") -> None:
+        """Create an idle conversation checkpoint without calling the model."""
+        self._sequence = 0
+        messages = [Message(role="system", content=self.config.system_prompt)]
+        usage = TokenUsage()
+        self._emit(
+            run_id,
+            "session_started",
+            {"task": task, "config": self.config.model_dump()},
+        )
+        self._save_checkpoint(run_id, task, "idle", messages, 0, usage)
+
+    async def continue_conversation(
+        self,
+        run_id: str,
+        content: str,
+        *,
+        max_steps: int | None = None,
+    ) -> RunResult:
+        """Append one user turn and keep the same messages, usage, and run identifier."""
+        if not content.strip():
+            raise ValueError("conversation message cannot be empty")
+        checkpoint = self.checkpoint.load(run_id)
+        if checkpoint is None:
+            raise ValueError(f"checkpoint not found: {run_id}")
+        if checkpoint.usage.total_tokens >= self.config.max_total_tokens:
+            raise ValueError("session token limit reached; use /clear to start a new session")
+
+        turn_step_limit = checkpoint.steps + (max_steps or self.config.max_steps)
+        self._sequence = checkpoint.trace_sequence
+        messages = list(checkpoint.messages)
+        messages.append(Message(role="user", content=content))
+        self._emit(
+            run_id,
+            "user_message",
+            {"content": content, "turn_step_limit": turn_step_limit},
+        )
+        self._save_checkpoint(
+            run_id,
+            checkpoint.task,
+            "running",
+            messages,
+            checkpoint.steps,
+            checkpoint.usage,
+        )
+        result = await self._continue(
+            run_id,
+            checkpoint.task,
+            messages,
+            checkpoint.usage.model_copy(deep=True),
+            start_step=checkpoint.steps + 1,
+            step_limit=turn_step_limit,
+        )
+        token_limit_reached = result.usage.total_tokens >= self.config.max_total_tokens
+        self._emit(
+            run_id,
+            "session_limit_reached" if token_limit_reached else "session_waiting_input",
+            {"last_status": result.status.value},
+        )
+        self._save_checkpoint(
+            run_id,
+            checkpoint.task,
+            RunStatus.TOKEN_LIMIT.value if token_limit_reached else "idle",
+            result.messages,
+            result.steps,
+            result.usage,
+            output=result.output,
+            error=result.error,
+        )
+        return result
+
+    def end_session(self, run_id: str, *, reason: str = "quit") -> None:
+        """Close an interactive session while preserving its final checkpoint."""
+        checkpoint = self.checkpoint.load(run_id)
+        if checkpoint is None:
+            raise ValueError(f"checkpoint not found: {run_id}")
+        self._sequence = checkpoint.trace_sequence
+        self._emit(
+            run_id,
+            "session_finished",
+            {
+                "reason": reason,
+                "steps": checkpoint.steps,
+                "usage": checkpoint.usage.model_dump(),
+            },
+        )
+        self._save_checkpoint(
+            run_id,
+            checkpoint.task,
+            RunStatus.COMPLETED.value,
+            checkpoint.messages,
+            checkpoint.steps,
+            checkpoint.usage,
+            output=checkpoint.output,
+            error=checkpoint.error,
+        )
+
     async def resume(self, run_id: str) -> RunResult:
         """Continue a non-completed run from its last consistent checkpoint."""
         checkpoint = self.checkpoint.load(run_id)
@@ -112,9 +209,10 @@ class AgentRuntime:
         usage: TokenUsage,
         *,
         start_step: int,
+        step_limit: int | None = None,
     ) -> RunResult:
-
-        for step in range(start_step, self.config.max_steps + 1):
+        resolved_step_limit = step_limit or self.config.max_steps
+        for step in range(start_step, resolved_step_limit + 1):
             try:
                 model_messages = self.context.prepare(messages)
                 response = await self._complete_model(run_id, step, model_messages)
@@ -205,7 +303,7 @@ class AgentRuntime:
             task,
             RunStatus.STEP_LIMIT,
             messages,
-            max(start_step - 1, self.config.max_steps),
+            max(start_step - 1, resolved_step_limit),
             usage,
         )
 

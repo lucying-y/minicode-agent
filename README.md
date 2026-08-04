@@ -23,6 +23,7 @@ an agent framework.
 - Append-only JSONL traces for model responses, tool results, usage, timing, and terminal status.
 - SQLite checkpoints that preserve consistent messages, cumulative usage, and trace sequence.
 - A workspace-local SQLite run store shared by CLI and Web timelines across processes.
+- A persistent interactive CLI session with multi-turn context and slash commands.
 - Repeatable repository-task evaluation with deterministic verification and JSON metric reports.
 - Deterministic Fake Provider for offline testing and demos.
 - Local React Web Console with FastAPI, SSE event updates, browser approvals, and checkpoint resume.
@@ -79,6 +80,31 @@ MINICODE_MODEL=your-model-name
 
 The API key is loaded from the local `.env`, which is ignored by Git. It is never expected in source
 files or command-line arguments.
+
+### Interactive CLI
+
+From the repository you want the agent to work on, enter a persistent session with `minicode chat`.
+Running `minicode` without a subcommand does the same thing:
+
+```bash
+uv run minicode chat --workspace /path/to/repo
+```
+
+Each message keeps the same `run_id`, model history, cumulative token usage, approvals, checkpoint,
+and Web timeline. `--max-steps` is the per-message model-step limit in chat mode. Available commands
+are `/help`, `/status`, `/history`, `/clear`, `/exit`, and `/quit`; bare `exit` and `quit` also close
+the session. `/clear` closes the current run and starts a new one with empty context.
+
+To use the shorter `minicode` command from any current directory, install this checkout once:
+
+```bash
+uv tool install -e /absolute/path/to/minicode-agent
+cd /path/to/repo
+minicode
+```
+
+The installed command reads `MINICODE_*` from the shell environment or a `.env` in the directory
+where it is launched.
 
 Run a repository task:
 
@@ -166,7 +192,7 @@ uv run pytest --cov
 Tests use temporary workspaces, mocked HTTP responses, and a deterministic model. They cover the
 agent loop, limits, context selection, path escape prevention, approvals, file tools, command
 failure/timeout behavior, checkpoint recovery, provider translation, CLI demo, repository-task
-evaluation, and JSONL event ordering.
+evaluation, interactive multi-turn context, and JSONL event ordering.
 
 ## Structure
 

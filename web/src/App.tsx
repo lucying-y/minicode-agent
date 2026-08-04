@@ -40,6 +40,7 @@ const terminalStatuses = new Set([
 const resumableStatuses = new Set(["step_limit", "token_limit", "tool_error", "failed"]);
 
 const statusLabel: Record<string, string> = {
+  idle: "等待输入",
   queued: "排队中",
   running: "运行中",
   waiting_approval: "等待审批",
@@ -77,6 +78,16 @@ function eventPresentation(event: ConsoleEvent) {
       return { icon: CircleDot, title: `状态：${statusLabel[String(event.data.status)] || event.data.status}`, tone: "neutral" };
     case "run_started":
       return { icon: Play, title: "Agent 开始执行", tone: "positive" };
+    case "session_started":
+      return { icon: TerminalSquare, title: "CLI 会话已启动", tone: "positive" };
+    case "user_message":
+      return { icon: MessageSquareText, title: "用户消息", tone: "model" };
+    case "session_waiting_input":
+      return { icon: Clock3, title: "等待下一条输入", tone: "neutral" };
+    case "session_limit_reached":
+      return { icon: AlertTriangle, title: "会话达到 Token 上限", tone: "warning" };
+    case "session_finished":
+      return { icon: CheckCircle2, title: "CLI 会话已退出", tone: "positive" };
     case "run_resumed":
       return { icon: RotateCcw, title: "从 Checkpoint 恢复", tone: "positive" };
     case "model_response":
@@ -334,7 +345,11 @@ function RunSidebar({
               <ChevronRight size={15} />
             </div>
             <div className="run-row-meta">
-              <span><SourceBadge source={run.source} />{statusLabel[run.status] || run.status}</span>
+              <span>
+                <SourceBadge source={run.source} />
+                {run.mode === "chat" && <span className="source-badge mode-chat">CHAT</span>}
+                {statusLabel[run.status] || run.status}
+              </span>
               <span>{formatTime(run.updated_at)}</span>
             </div>
           </button>
@@ -531,6 +546,7 @@ function Inspector({
         <div className="inspector-section-title"><Settings2 size={15} />运行配置</div>
         <dl className="definition-list">
           <div><dt>来源</dt><dd><SourceBadge source={run.source} /></dd></div>
+          <div><dt>模式</dt><dd>{run.mode === "chat" ? "交互会话" : "单次任务"}</dd></div>
           <div><dt>模型</dt><dd title={run.model_name}>{run.model_name}</dd></div>
           <div><dt>工作区</dt><dd title={run.workspace}>{run.workspace}</dd></div>
           <div><dt>最大步数</dt><dd>{run.max_steps}</dd></div>
@@ -713,6 +729,7 @@ export default function App() {
                   <div className="run-status-line">
                     <span className={`status-chip status-${selectedRun.status}`}><span />{statusLabel[selectedRun.status] || selectedRun.status}</span>
                     <SourceBadge source={selectedRun.source} />
+                    {selectedRun.mode === "chat" && <span className="source-badge mode-chat">CHAT</span>}
                     <span className="workspace-path"><FolderGit2 size={14} />{selectedRun.workspace}</span>
                   </div>
                   <h1>{selectedRun.task}</h1>
@@ -724,7 +741,13 @@ export default function App() {
 
               <div className="metrics-strip">
                 <div><span>状态</span><strong>{statusLabel[selectedRun.status] || selectedRun.status}</strong></div>
-                <div><span>模型步数</span><strong>{selectedRun.steps}<small> / {selectedRun.max_steps}</small></strong></div>
+                <div>
+                  <span>{selectedRun.mode === "chat" ? "累计步数" : "模型步数"}</span>
+                  <strong>
+                    {selectedRun.steps}
+                    {selectedRun.mode === "task" && <small> / {selectedRun.max_steps}</small>}
+                  </strong>
+                </div>
                 <div><span>输入 Token</span><strong>{formatNumber(selectedRun.input_tokens)}</strong></div>
                 <div><span>输出 Token</span><strong>{formatNumber(selectedRun.output_tokens)}</strong></div>
                 <div><span>事件</span><strong>{selectedRun.event_count}</strong></div>
