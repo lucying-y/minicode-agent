@@ -16,6 +16,20 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _sqlite_text(value: Any) -> str:
+    return str(value).encode("utf-8", errors="replace").decode("utf-8")
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sqlite_text(value)
+    if isinstance(value, dict):
+        return {_sqlite_text(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 class StoredRun(BaseModel):
     """One durable run summary shared by all local entry points."""
 
@@ -114,11 +128,11 @@ class SqliteRunStore:
                 (
                     run_id,
                     source,
-                    task,
+                    _sqlite_text(task),
                     str(self.workspace),
-                    model_name,
+                    _sqlite_text(model_name),
                     status,
-                    json.dumps(config, ensure_ascii=False),
+                    json.dumps(_json_safe(config), ensure_ascii=False),
                     timestamp,
                     timestamp,
                 ),
@@ -132,7 +146,7 @@ class SqliteRunStore:
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE runs SET config_json = ?, updated_at = ? WHERE run_id = ?",
-                (json.dumps(config, ensure_ascii=False), _now(), run_id),
+                (json.dumps(_json_safe(config), ensure_ascii=False), _now(), run_id),
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"run not found: {run_id}")
@@ -141,7 +155,7 @@ class SqliteRunStore:
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE runs SET task = ?, updated_at = ? WHERE run_id = ?",
-                (task, _now(), run_id),
+                (_sqlite_text(task), _now(), run_id),
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"run not found: {run_id}")
@@ -187,7 +201,7 @@ class SqliteRunStore:
                     event_timestamp,
                     event_type,
                     runtime_sequence,
-                    json.dumps(data, ensure_ascii=False),
+                    json.dumps(_json_safe(data), ensure_ascii=False),
                 ),
             )
             self._apply_event(connection, run_id, event_type, data, event_id, event_timestamp)
@@ -289,15 +303,18 @@ class SqliteRunStore:
                     int(data["steps"]),
                     int(usage.get("input_tokens", 0)),
                     int(usage.get("output_tokens", 0)),
-                    str(data.get("output", "")),
-                    data.get("error"),
+                    _sqlite_text(data.get("output", "")),
+                    _sqlite_text(data["error"]) if data.get("error") is not None else None,
                     run_id,
                 ),
             )
         elif event_type == "web_error":
             connection.execute(
                 "UPDATE runs SET error = ? WHERE run_id = ?",
-                (data.get("error"), run_id),
+                (
+                    _sqlite_text(data["error"]) if data.get("error") is not None else None,
+                    run_id,
+                ),
             )
 
         if status is not None:

@@ -83,6 +83,19 @@ def test_run_store_projects_chat_mode_and_idle_status(tmp_path: Path) -> None:
     assert run.task == "inspect the repository"
 
 
+def test_run_store_sanitizes_unpaired_surrogates(tmp_path: Path) -> None:
+    store = SqliteRunStore(tmp_path)
+    _create_run(store)
+
+    store.update_task("run-1", "\udce3/help")
+    store.append_event("run-1", "user_message", {"content": "\udce3/help"})
+
+    run = store.get_run("run-1")
+    assert run is not None
+    assert run.task == "?/help"
+    assert store.list_events("run-1")[0]["data"]["content"] == "?/help"
+
+
 def test_recorder_batches_model_deltas_and_preserves_jsonl_trace(tmp_path: Path) -> None:
     store = SqliteRunStore(tmp_path)
     _create_run(store)

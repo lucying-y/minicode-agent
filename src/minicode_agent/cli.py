@@ -320,6 +320,21 @@ def _print_chat_help() -> None:
     )
 
 
+def _normalize_chat_input(raw: str) -> str:
+    """Repair surrogate-escaped terminal bytes and remove common paste artifacts."""
+    try:
+        repaired = raw.encode("utf-8", errors="surrogateescape").decode(
+            "utf-8", errors="replace"
+        )
+    except UnicodeEncodeError:
+        repaired = "".join(
+            "\ufffd" if 0xD800 <= ord(character) <= 0xDFFF else character
+            for character in raw
+        )
+    repaired = repaired.replace("\x1b[200~", "").replace("\x1b[201~", "")
+    return repaired.strip().lstrip("\ufeff\ufffd\u200b")
+
+
 async def run_chat_command(args: argparse.Namespace) -> int:
     """Run a persistent, terminal-driven conversation in one workspace."""
     model_configuration = _load_model_configuration()
@@ -383,7 +398,7 @@ async def run_chat_command(args: argparse.Namespace) -> int:
                 raw = await asyncio.to_thread(input, "minicode> ")
             except EOFError:
                 raw = "/exit"
-            content = raw.strip()
+            content = _normalize_chat_input(raw)
             if not content:
                 continue
             command = content.lower()

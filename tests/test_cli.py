@@ -1,7 +1,13 @@
 import json
 from pathlib import Path
 
-from minicode_agent.cli import AlwaysApprover, ConsoleApprover, async_main, build_parser
+from minicode_agent.cli import (
+    AlwaysApprover,
+    ConsoleApprover,
+    _normalize_chat_input,
+    async_main,
+    build_parser,
+)
 from minicode_agent.models import FakeModelProvider
 from minicode_agent.persistence import SqliteRunStore
 from minicode_agent.runtime import ModelResponse, ToolCall
@@ -40,6 +46,11 @@ def test_parser_accepts_run_configuration() -> None:
     assert web_args.web_dist == Path("web/dist")
     assert web_args.workspace == Path.cwd()
     assert web_args.demo
+
+
+def test_chat_input_repairs_surrogate_escaped_command_prefix() -> None:
+    assert _normalize_chat_input("\udce3/help") == "/help"
+    assert _normalize_chat_input("\x1b[200~/status\x1b[201~") == "/status"
 
 
 async def test_web_rejects_invalid_default_workspace(tmp_path: Path, capsys) -> None:
@@ -167,6 +178,29 @@ async def test_bare_cli_command_enters_chat_in_current_directory(
     assert len(runs) == 1
     assert runs[0].mode == "chat"
     assert runs[0].status == "completed"
+
+
+async def test_help_command_with_surrogate_prefix_does_not_start_model(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    fake_model = FakeModelProvider([])
+    answers = iter(["\udce3/help", "/exit"])
+    monkeypatch.setenv("MINICODE_API_KEY", "test-key")
+    monkeypatch.setenv("MINICODE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("MINICODE_MODEL", "fake-model")
+    monkeypatch.setattr(
+        "minicode_agent.cli.OpenAICompatibleProvider",
+        lambda **kwargs: fake_model,
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+
+    exit_code = await async_main(["chat", "--workspace", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Commands:" in capsys.readouterr().out
+    assert fake_model.requests == []
 
 
 async def test_console_and_always_approvers(monkeypatch) -> None:
