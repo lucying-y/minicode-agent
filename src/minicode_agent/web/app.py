@@ -117,6 +117,15 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    @app.post("/api/runs/{run_id}/cancel", response_model=RunView)
+    async def cancel_run(run_id: str) -> RunView:
+        try:
+            return await manager.cancel_run(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     resolved_static = static_dir.resolve() if static_dir is not None else None
     if resolved_static is not None and (resolved_static / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=resolved_static / "assets"), name="assets")

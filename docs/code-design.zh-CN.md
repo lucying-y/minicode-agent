@@ -625,6 +625,7 @@ JSONL 表示每一行都是一个完整 JSON 对象。追加写入比维护一�
 | `tool_result` | 调用参数、结果、错误状态、审批耗时和实际工具耗时 |
 | `model_error` | Provider 或上下文准备异常 |
 | `run_resumed` | 从哪个状态和第几步恢复 |
+| `run_cancelled` | 取消原因、最近一致步数、累计 Token 和可恢复输出 |
 | `run_finished` | 最终状态、步数、累计 Token 和错误 |
 | `session_started` | 交互式 CLI 会话建立 |
 | `user_message` | 会话中新追加的用户输入 |
@@ -685,9 +686,11 @@ Checkpoint 会在以下位置保存：
 2. 一轮模型响应中的全部工具执行完毕后；
 3. 任务进入任意终态时；
 4. 恢复任务刚开始时。
+5. 用户取消 Web/CLI 任务时。
 
-`resume(run_id)` 会拒绝不存在或已经 `completed` 的任务。对于可恢复任务，它沿用相同 `run_id`、
-消息、Token 用量和 Trace 序号，并从 `completed_steps + 1` 开始。
+`resume(run_id)` 会拒绝不存在或已经 `completed` 的任务。`cancelled` 属于可恢复终态：取消只保留
+最近一个内部一致边界，不把进行到一半的模型分片或工具调用写进 Checkpoint。对于可恢复任务，
+它沿用相同 `run_id`、消息、Token 用量和 Trace 序号，并从 `completed_steps + 1` 开始。
 
 Checkpoint 保存的是应用层一致边界，但仍有一个重要限制：如果进程在文件已经修改、但本轮
 Checkpoint 尚未保存时崩溃，磁盘副作用已经发生，恢复后模型可能再次请求类似操作。未来可通过
@@ -739,7 +742,7 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 
 ## 15. 测试策略
 
-项目当前有 61 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
+项目当前有 67 项自动化测试，主要遵循“核心逻辑使用确定性替身，外部边界使用模拟”的思路：
 
 - Agent Runtime：使用 Fake Provider 和 Stub Tool；
 - HTTP Provider：使用 `httpx.MockTransport`，不发送真实请求；
@@ -751,6 +754,7 @@ Benchmark。评测命令仍直接运行在宿主机，所以外部任务文件�
 - 交互会话：验证跨轮消息、累计 Token、会话命令和 `/clear` 后的新 Run；
 - Evaluation：使用临时题目和确定性校验命令；
 - Web API：使用进程内 ASGI 客户端验证创建、审批、事件、停止限制和恢复。
+- 取消控制：覆盖排队、模型请求、等待审批、Shell 进程树和 CLI 中断，并验证取消后恢复。
 - 平台执行：验证 PowerShell 参数、UTF-8 包装、Shell 检测、Windows 路径规则以及带空格和中文的
   工作区；Windows 专项用例会实际运行 PowerShell 并验证失败退出码与进程树超时。
 
@@ -843,7 +847,8 @@ uv run pytest --cov
 3. Trace 没有通用的秘密信息内容脱敏；
 4. Shell 在宿主机运行，拒绝列表不能替代 Docker 沙箱；
 5. Web 只自动发现默认工作区和本进程已注册工作区，旧 JSONL 不会自动回填共享列表；
-6. 没有主动取消、跨进程任务队列、多用户认证、Git Diff 和测试结果专用视图；
+6. Web 不能取消其他进程拥有的 CLI 任务，也没有跨进程任务队列、多用户认证、Git Diff 和测试
+   结果专用视图；
 7. Checkpoint 不能为未记录的文件副作用提供事务回滚；
 8. 文件工具只处理 UTF-8 文本，`edit_file` 只支持唯一精确替换；
 9. 评测集规模很小，不能作为通用 Coding Agent 能力结论；
@@ -873,6 +878,10 @@ flowchart LR
 `PersistentRunRecorder` 一边把 Runtime 事件追加到 JSONL，一边写入工作区的 `runs.db`。
 `_WebApprover` 使用 `asyncio.Future` 等待浏览器的批准或拒绝，等待期间不会阻塞其他 HTTP 请求。
 
+取消接口只操作 Run Manager 自己持有的 `asyncio.Task`。Runtime 取消时把最后一致 Checkpoint
+转成 `cancelled`，Shell Backend 在传播 `CancelledError` 前终止进程树。已经完成的外部副作用不在
+Checkpoint 事务内，因此取消是“停止继续执行”，不是回滚。
+
 React 前端通过 REST 创建、查询、审批和恢复 Web 任务，通过 SSE 接收增量事件。它展示 CLI/Web
 来源、模型、状态、指标、执行时间线和原始事件 JSON。SSE 从 Run Store 按事件 ID 轮询，因此同一
 工作区中另一个 CLI 进程产生的新事件也会出现。CLI 运行在网页中只读，审批和恢复仍由 CLI 负责。
@@ -882,8 +891,8 @@ React 前端通过 REST 创建、查询、审批和恢复 Web 任务，通过 SS
 JSONL Trace；最终完整 `model_response` 到达后替换临时输出，并按原有流程持久化。
 
 当前 API 路径、运行时序、持久化边界和界面操作详见
-[《Web Console 使用与设计说明》](web-console.zh-CN.md)。下一阶段应补充任务取消、跨工作区索引、
-Git Diff、测试结果视图和 Docker 隔离。
+[《Web Console 使用与设计说明》](web-console.zh-CN.md)。下一阶段应补充跨工作区索引、Git Diff、
+测试结果视图和 Docker 隔离。
 
 ## 19. 推荐源码阅读顺序
 
@@ -931,5 +940,5 @@ Context 是本次发送给模型的有限消息；Checkpoint 是恢复任务所�
 
 ### 这个项目现在最值得增加什么？
 
-优先增加任务取消、Git Diff 和测试结果视图，再增加 Docker 隔离。它们能够在保留当前 Runtime
-设计的同时，继续补齐真实使用体验和安全边界。
+任务取消已经完成。下一步优先增加 Git Diff 和测试结果视图，再增加 Docker 隔离。它们能够在
+保留当前 Runtime 设计的同时，继续补齐真实使用体验和安全边界。

@@ -334,6 +334,10 @@ async def run_model_command(args: argparse.Namespace) -> int:
                 return 2
         else:
             result = await runtime.run(args.task, run_id=run_id)
+    except asyncio.CancelledError:
+        runtime.cancel(run_id, reason="keyboard_interrupt")
+        print("\nRun cancelled.")
+        raise
     finally:
         recorder.flush_model_delta()
         await provider.aclose()
@@ -505,6 +509,10 @@ async def run_chat_command(args: argparse.Namespace) -> int:
                 print("[token_limit] Session limit reached; use /clear to continue.")
             elif result.status is not RunStatus.COMPLETED:
                 print(f"[{result.status.value}] Continue with another message or use /clear.")
+    except asyncio.CancelledError:
+        runtime.cancel(run_id, reason="keyboard_interrupt")
+        print("\nSession cancelled.")
+        raise
     finally:
         recorder.flush_model_delta()
         close = getattr(provider, "aclose", None)

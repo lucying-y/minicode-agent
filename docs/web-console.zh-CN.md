@@ -226,6 +226,17 @@ SSE 每约 250 ms 查询一次新增事件，因此能看到另一个 CLI 进程
 
 拒绝操作时，Runtime 会把拒绝结果作为工具观察返回模型，而不是绕过审批直接执行。
 
+### 6.1 取消与恢复
+
+Web 创建且仍处于排队、模型请求、工具执行或等待审批状态的任务，标题区域会显示“取消任务”。
+取消请求先写入 `run_cancel_requested`，随后取消对应的 `asyncio.Task`。如果正在执行 Shell，Shell
+Backend 会先终止整个进程树；如果正在等待审批，待审批 Future 会随任务一同取消。
+
+任务最终写入 `run_cancelled`，并把最近一个内部一致边界保存为 `cancelled` Checkpoint。取消状态
+可以再次点击“恢复运行”，继续使用原来的 `run_id`、消息、Token、步数和 Trace 序号。已经完成的
+文件写入或外部命令副作用不会回滚。页面不能取消 `source=cli` 的运行，因为 Web 进程不拥有对应
+CLI 的任务句柄；CLI 使用 `Ctrl+C` 时会自行记录取消状态。
+
 ## 7. API
 
 | 方法 | 路径 | 作用 |
@@ -238,6 +249,7 @@ SSE 每约 250 ms 查询一次新增事件，因此能看到另一个 CLI 进程
 | `GET` | `/api/runs/{id}/events` | 订阅 SSE 实时事件 |
 | `POST` | `/api/runs/{id}/approval` | 批准或拒绝当前 Web 任务的待审批操作 |
 | `POST` | `/api/runs/{id}/resume` | 使用新限制从 Checkpoint 恢复 Web 任务 |
+| `POST` | `/api/runs/{id}/cancel` | 取消当前 Web 进程拥有的活动任务 |
 
 创建任务示例：
 
@@ -327,7 +339,6 @@ npm run build
 
 ## 11. 当前未实现
 
-- 主动取消正在运行或等待审批的任务；
 - 自动发现未配置的其他工作区；
 - Git Diff 和测试结果的专用视图；
 - 服务商专有的流式协议和非文本内容分片；

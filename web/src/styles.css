@@ -83,6 +83,7 @@ button { cursor: pointer; }
 .source-badge.mode-chat { color: #65408a; border-color: #d3bde5; background: #f6effb; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #929a95; }
 .status-dot.status-running, .status-dot.status-queued { background: var(--model); }
+.status-dot.status-cancelling { background: var(--warning); }
 .status-dot.status-waiting_approval { background: #da8b1d; }
 .status-dot.status-completed { background: var(--accent); }
 .status-dot.status-failed, .status-dot.status-tool_error, .status-dot.status-cancelled { background: var(--danger); }
@@ -96,8 +97,9 @@ button { cursor: pointer; }
 .status-chip > span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-chip.status-completed { color: #0d7652; background: #e9f6f0; }
 .status-chip.status-running, .status-chip.status-queued { color: #285f9e; background: #edf4fb; }
-.status-chip.status-waiting_approval { color: #9a5b06; background: #fff4df; }
-.status-chip.status-failed, .status-chip.status-tool_error { color: #a9322d; background: #fff0ef; }
+.status-chip.status-waiting_approval, .status-chip.status-cancelling { color: #9a5b06; background: #fff4df; }
+.status-chip.status-failed, .status-chip.status-tool_error, .status-chip.status-cancelled { color: #a9322d; background: #fff0ef; }
+.run-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .workspace-path { min-width: 0; color: #77807b; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-heading h1 { max-width: 760px; margin: 12px 0 0; font-size: 19px; line-height: 1.4; letter-spacing: 0; font-weight: 680; overflow-wrap: anywhere; }
 .metrics-strip { min-height: 66px; display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); padding: 0 28px; border-bottom: 1px solid var(--border); background: #fbfcfb; }
@@ -229,7 +231,7 @@ button { cursor: pointer; }
   .brand-name span, .connection-state, .topbar-actions > .icon-button { display: none; }
   .button { padding: 0 10px; }
   .run-header { min-height: 0; display: block; padding: 17px 15px; }
-  .run-header > .button { margin-top: 14px; }
+  .run-actions { margin-top: 14px; }
   .workspace-path { max-width: 190px; }
   .run-heading h1 { font-size: 16px; }
   .metrics-strip { grid-template-columns: repeat(2, 1fr); padding: 0 15px; }

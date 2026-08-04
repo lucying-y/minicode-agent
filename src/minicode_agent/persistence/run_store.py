@@ -261,6 +261,8 @@ class SqliteRunStore:
             status = "queued"
         elif event_type == "approval_required":
             status = "waiting_approval"
+        elif event_type == "run_cancel_requested":
+            status = "cancelling"
         elif event_type == "run_status":
             status = str(data["status"])
         elif event_type == "web_error":
@@ -289,7 +291,7 @@ class SqliteRunStore:
                     run_id,
                 ),
             )
-        elif event_type == "run_finished":
+        elif event_type in {"run_finished", "run_cancelled"}:
             usage = data.get("usage", {})
             connection.execute(
                 """

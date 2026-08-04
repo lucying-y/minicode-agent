@@ -87,6 +87,7 @@ class RunStatus(StrEnum):
     TOKEN_LIMIT = "token_limit"
     TOOL_ERROR = "tool_error"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RunResult(BaseModel):

@@ -171,6 +171,46 @@ class AgentRuntime:
             error=checkpoint.error,
         )
 
+    def cancel(self, run_id: str, *, reason: str = "user_requested") -> RunResult:
+        """Stop at the last consistent checkpoint and preserve it for resume."""
+        checkpoint = self.checkpoint.load(run_id)
+        if checkpoint is None:
+            raise ValueError(f"checkpoint not found: {run_id}")
+        self._sequence = max(self._sequence, checkpoint.trace_sequence)
+        result = RunResult(
+            run_id=run_id,
+            status=RunStatus.CANCELLED,
+            output=checkpoint.output,
+            messages=list(checkpoint.messages),
+            steps=checkpoint.steps,
+            usage=checkpoint.usage.model_copy(deep=True),
+            error=None,
+        )
+        if checkpoint.status == RunStatus.CANCELLED.value:
+            return result
+        self._emit(
+            run_id,
+            "run_cancelled",
+            {
+                "status": RunStatus.CANCELLED.value,
+                "reason": reason,
+                "steps": checkpoint.steps,
+                "usage": checkpoint.usage.model_dump(),
+                "output": checkpoint.output,
+                "error": None,
+            },
+        )
+        self._save_checkpoint(
+            run_id,
+            checkpoint.task,
+            RunStatus.CANCELLED.value,
+            list(checkpoint.messages),
+            checkpoint.steps,
+            checkpoint.usage,
+            output=checkpoint.output,
+        )
+        return result
+
     async def resume(self, run_id: str) -> RunResult:
         """Continue a non-completed run from its last consistent checkpoint."""
         checkpoint = self.checkpoint.load(run_id)

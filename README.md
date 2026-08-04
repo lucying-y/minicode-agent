@@ -26,7 +26,10 @@ an agent framework.
 - A persistent interactive CLI session with multi-turn context and slash commands.
 - Repeatable repository-task evaluation with deterministic verification and JSON metric reports.
 - Deterministic Fake Provider for offline testing and demos.
-- Local React Web Console with FastAPI, SSE event updates, browser approvals, and checkpoint resume.
+- Local React Web Console with FastAPI, SSE event updates, browser approvals, active cancellation,
+  and checkpoint resume.
+- Cancellation during model requests, pending approvals, and shell execution, plus persisted CLI
+  interruption state on `Ctrl+C`.
 
 ## Quick start
 
@@ -251,11 +254,13 @@ web/               # React, TypeScript and Vite console
 - Context usage is estimated from serialized character length, not a provider tokenizer.
 - The Web Console discovers persisted history only in its configured workspace and workspaces used
   by Web runs during that server process. Existing JSONL traces are not backfilled into `runs.db`.
-- There is no task cancellation endpoint, Git diff view, container sandbox, multi-user
-  authentication, MCP, or sub-agent orchestration yet.
+- Web cancellation controls only tasks owned by the current server process and cannot roll back file
+  changes or other side effects that already completed.
+- There is no Git diff view, container sandbox, multi-user authentication, MCP, or sub-agent
+  orchestration yet.
 
 ## Roadmap
 
 1. Expand evaluation tasks and compare multiple model/configuration combinations.
-2. Add structured Git diff and test-result views plus task cancellation.
+2. Add structured Git diff and test-result views.
 3. Add an isolated Docker execution environment.

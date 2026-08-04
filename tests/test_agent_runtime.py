@@ -203,3 +203,23 @@ async def test_interactive_session_marks_exact_token_limit(tmp_path: Path) -> No
     checkpoint = checkpoint_store.load("limited-chat")
     assert checkpoint is not None
     assert checkpoint.status == RunStatus.TOKEN_LIMIT.value
+
+
+async def test_runtime_cancellation_preserves_resumable_checkpoint(tmp_path: Path) -> None:
+    checkpoint_store = SqliteCheckpointStore(tmp_path / "checkpoints.db")
+    runtime = AgentRuntime(
+        FakeModelProvider([]),
+        StubTools(),
+        checkpoint=checkpoint_store,
+    )
+    runtime.start_session("cancel-run", task="cancel safely")
+
+    result = runtime.cancel("cancel-run", reason="user_requested")
+    repeated = runtime.cancel("cancel-run", reason="duplicate")
+
+    assert result.status is RunStatus.CANCELLED
+    assert repeated.status is RunStatus.CANCELLED
+    checkpoint = checkpoint_store.load("cancel-run")
+    assert checkpoint is not None
+    assert checkpoint.status == RunStatus.CANCELLED.value
+    assert checkpoint.task == "cancel safely"

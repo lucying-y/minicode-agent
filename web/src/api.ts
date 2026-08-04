@@ -25,6 +25,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ approval_id: approvalId, approved }),
     }),
+  cancelRun: (runId: string) =>
+    request<Run>(`/api/runs/${runId}/cancel`, { method: "POST" }),
   resumeRun: (run: Run) =>
     request<Run>(`/api/runs/${run.run_id}/resume`, {
       method: "POST",

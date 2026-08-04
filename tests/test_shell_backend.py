@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 
@@ -143,6 +144,23 @@ async def test_detected_shell_handles_utf8_and_workspace_with_spaces(tmp_path: P
 
     assert result.exit_code == 0
     assert result.output == "你好"
+
+
+async def test_cancelling_shell_command_terminates_process_tree(tmp_path: Path) -> None:
+    execution = asyncio.create_task(
+        default_shell().run(
+            'python -c "import time; print(\'started\', flush=True); time.sleep(30)"',
+            cwd=tmp_path,
+            timeout_seconds=60,
+            max_chars=1_000,
+        )
+    )
+    await asyncio.sleep(0.2)
+
+    execution.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(execution, timeout=5)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires native Windows PowerShell")

@@ -1,5 +1,8 @@
+import asyncio
 import json
 from pathlib import Path
+
+import pytest
 
 from minicode_agent.cli import (
     AlwaysApprover,
@@ -10,7 +13,7 @@ from minicode_agent.cli import (
     build_parser,
 )
 from minicode_agent.models import FakeModelProvider
-from minicode_agent.persistence import SqliteRunStore
+from minicode_agent.persistence import SqliteCheckpointStore, SqliteRunStore
 from minicode_agent.runtime import ModelResponse, ToolCall
 from minicode_agent.security import PermissionLevel
 
@@ -316,3 +319,32 @@ async def test_cli_reports_missing_platform_shell(tmp_path: Path, monkeypatch, c
 
     assert exit_code == 2
     assert "Shell unavailable: PowerShell is required" in capsys.readouterr().out
+
+
+async def test_cli_interruption_persists_cancelled_run(tmp_path: Path, monkeypatch) -> None:
+    class CancellingProvider(FakeModelProvider):
+        async def complete(self, messages, tools):
+            del messages, tools
+            raise asyncio.CancelledError
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setenv("MINICODE_API_KEY", "test-key")
+    monkeypatch.setenv("MINICODE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("MINICODE_MODEL", "cancel-model")
+    monkeypatch.setattr(
+        "minicode_agent.cli.OpenAICompatibleProvider",
+        lambda **kwargs: CancellingProvider([]),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await async_main(["run", "cancel me", "--workspace", str(tmp_path)])
+
+    run = SqliteRunStore(tmp_path).list_runs()[0]
+    checkpoint = SqliteCheckpointStore(
+        tmp_path / ".minicode" / "checkpoints.db"
+    ).load(run.run_id)
+    assert run.status == "cancelled"
+    assert checkpoint is not None
+    assert checkpoint.status == "cancelled"

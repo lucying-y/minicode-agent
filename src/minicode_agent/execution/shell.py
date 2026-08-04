@@ -79,6 +79,9 @@ class ShellBackend(ABC):
                 process.communicate(),
                 timeout=timeout_seconds,
             )
+        except asyncio.CancelledError:
+            await self._terminate_tree(process)
+            raise
         except TimeoutError:
             await self._terminate_tree(process)
             return CommandResult(

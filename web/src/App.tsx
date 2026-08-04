@@ -20,6 +20,7 @@ import {
   Search,
   Settings2,
   ShieldAlert,
+  Square,
   TerminalSquare,
   Wrench,
   X,
@@ -37,13 +38,16 @@ const terminalStatuses = new Set([
   "cancelled",
 ]);
 
-const resumableStatuses = new Set(["step_limit", "token_limit", "tool_error", "failed"]);
+const resumableStatuses = new Set(["step_limit", "token_limit", "tool_error", "failed", "cancelled"]);
+
+const cancellableStatuses = new Set(["queued", "running", "waiting_approval", "cancelling"]);
 
 const statusLabel: Record<string, string> = {
   idle: "等待输入",
   queued: "排队中",
   running: "运行中",
   waiting_approval: "等待审批",
+  cancelling: "取消中",
   completed: "已完成",
   step_limit: "达到步数上限",
   token_limit: "达到 Token 上限",
@@ -76,6 +80,10 @@ function eventPresentation(event: ConsoleEvent) {
       return { icon: Clock3, title: "任务已加入队列", tone: "neutral" };
     case "run_status":
       return { icon: CircleDot, title: `状态：${statusLabel[String(event.data.status)] || event.data.status}`, tone: "neutral" };
+    case "run_cancel_requested":
+      return { icon: Square, title: "正在取消任务", tone: "warning" };
+    case "run_cancelled":
+      return { icon: Square, title: "任务已取消", tone: "danger" };
     case "run_started":
       return { icon: Play, title: "Agent 开始执行", tone: "positive" };
     case "session_started":
@@ -591,6 +599,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [approvalBusy, setApprovalBusy] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   const selectedRun = useMemo(
     () => runs.find((run) => run.run_id === selectedId) || null,
@@ -693,6 +702,22 @@ export default function App() {
     }
   }
 
+  async function cancelRun() {
+    if (!selectedRun || !window.confirm("确认取消当前任务？")) return;
+    setCancelBusy(true);
+    setError("");
+    try {
+      const cancelled = await api.cancelRun(selectedRun.run_id);
+      setRuns((current) => current.map((run) => (
+        run.run_id === cancelled.run_id ? cancelled : run
+      )));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "取消失败");
+    } finally {
+      setCancelBusy(false);
+    }
+  }
+
   function handleCreated(run: Run) {
     setRuns((current) => [run, ...current]);
     setSelectedId(run.run_id);
@@ -737,9 +762,20 @@ export default function App() {
                   </div>
                   <h1>{selectedRun.task}</h1>
                 </div>
-                {selectedRun.source === "web" && resumableStatuses.has(selectedRun.status) && (
-                  <button className="button secondary" onClick={() => void resume()}><RotateCcw size={16} />恢复运行</button>
-                )}
+                <div className="run-actions">
+                  {selectedRun.source === "web" && cancellableStatuses.has(selectedRun.status) && (
+                    <button
+                      className="button danger"
+                      disabled={cancelBusy || selectedRun.status === "cancelling"}
+                      onClick={() => void cancelRun()}
+                    >
+                      <Square size={15} />{selectedRun.status === "cancelling" ? "取消中" : "取消任务"}
+                    </button>
+                  )}
+                  {selectedRun.source === "web" && resumableStatuses.has(selectedRun.status) && (
+                    <button className="button secondary" onClick={() => void resume()}><RotateCcw size={16} />恢复运行</button>
+                  )}
+                </div>
               </div>
 
               <div className="metrics-strip">

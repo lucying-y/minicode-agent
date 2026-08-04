@@ -31,7 +31,9 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 - 提供持久化交互式 CLI，在同一会话中保留多轮上下文并支持斜杠命令。
 - 提供可重复运行的仓库任务评测，通过确定性校验命令判断结果并生成 JSON 报告。
 - 提供确定性的 Fake Provider，用于离线测试和演示。
-- 提供本地 React Web Console，通过 FastAPI、SSE、网页审批和 Checkpoint 恢复观察与控制任务。
+- 提供本地 React Web Console，通过 FastAPI、SSE、网页审批、主动取消和 Checkpoint 恢复观察与
+  控制任务。
+- Web 任务可在模型请求、等待审批或 Shell 执行阶段取消；CLI 使用 `Ctrl+C` 时也会保存取消状态。
 
 ## 快速开始
 
@@ -261,10 +263,12 @@ web/               # React、TypeScript 与 Vite 控制台
 - 上下文用量通过序列化后的字符长度估算，尚未使用模型对应的 Tokenizer。
 - Web 只发现启动时配置的工作区，以及本次服务运行期间创建过 Web 任务的其他工作区。已有的旧
   JSONL Trace 不会自动回填到 `.minicode/runs.db`。
-- 当前没有任务取消、Git Diff 视图、Docker 沙箱、多用户认证、MCP 或多 Agent 编排。
+- Web 只能取消当前服务进程创建的任务，不能从网页中断另一个 CLI 进程；取消也不会回滚已经发生的
+  文件修改或其他副作用。
+- 当前没有 Git Diff 视图、Docker 沙箱、多用户认证、MCP 或多 Agent 编排。
 
 ## 后续计划
 
 1. 扩充评测任务，并比较不同模型和运行参数组合。
-2. 增加结构化 Git Diff、测试结果视图和任务取消。
+2. 增加结构化 Git Diff 和测试结果视图。
 3. 增加基于 Docker 的隔离执行环境。

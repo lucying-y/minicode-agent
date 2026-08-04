@@ -4,9 +4,10 @@ from pathlib import Path
 import httpx
 
 from minicode_agent.models import FakeModelProvider
-from minicode_agent.persistence import SqliteRunStore
-from minicode_agent.runtime import ModelResponse, ToolCall
+from minicode_agent.persistence import SqliteCheckpointStore, SqliteRunStore
+from minicode_agent.runtime import Message, ModelResponse, ToolCall, ToolSchema
 from minicode_agent.web import RunManager, create_app
+from minicode_agent.web.models import CreateRunRequest
 
 
 async def _wait_for_status(
@@ -201,9 +202,146 @@ async def test_web_discovers_external_cli_run_and_streams_its_events(tmp_path: P
             "/api/runs/cli-run/approval",
             json={"approval_id": "terminal-only", "approved": True},
         )
+        cancel = await client.post("/api/runs/cli-run/cancel")
 
     assert resume.status_code == 409
     assert "read-only" in resume.json()["detail"]
     assert approval.status_code == 409
     assert "cannot be approved" in approval.json()["detail"]
+    assert cancel.status_code == 409
+    assert "cannot be cancelled" in cancel.json()["detail"]
+    await manager.shutdown()
+
+
+class BlockingModel:
+    supports_streaming = False
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def complete(
+        self,
+        messages: list[Message],
+        tools: list[ToolSchema],
+    ) -> ModelResponse:
+        del messages, tools
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("blocking model should be cancelled")
+
+
+async def test_web_cancels_model_request_and_resumes_checkpoint(tmp_path: Path) -> None:
+    blocking_model = BlockingModel()
+    resumed_model = FakeModelProvider([ModelResponse(content="resumed after cancellation")])
+    providers = iter([blocking_model, resumed_model])
+    manager = RunManager(
+        lambda: next(providers),
+        model_name="cancel-test-model",
+        default_workspace=tmp_path,
+    )
+    app = create_app(manager)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/api/runs",
+            json={"task": "block until cancelled", "workspace": str(tmp_path)},
+        )
+        run_id = created.json()["run_id"]
+        await asyncio.wait_for(blocking_model.started.wait(), timeout=1)
+
+        cancelled = await client.post(f"/api/runs/{run_id}/cancel")
+
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
+        checkpoint = SqliteCheckpointStore(
+            tmp_path / ".minicode" / "checkpoints.db"
+        ).load(run_id)
+        assert checkpoint is not None
+        assert checkpoint.status == "cancelled"
+
+        events = (await client.get(f"/api/runs/{run_id}/events/history")).json()
+        event_types = [event["event_type"] for event in events]
+        assert "run_cancel_requested" in event_types
+        assert event_types[-1] == "run_cancelled"
+
+        resumed = await client.post(
+            f"/api/runs/{run_id}/resume",
+            json={"max_steps": 12},
+        )
+        assert resumed.status_code == 202
+        await _wait_for_status(manager, run_id, "completed")
+        assert manager.get_run(run_id).output == "resumed after cancellation"
+
+        repeated = await client.post(f"/api/runs/{run_id}/cancel")
+        assert repeated.status_code == 409
+        assert "not active" in repeated.json()["detail"]
+
+    await manager.shutdown()
+
+
+async def test_web_cancels_pending_approval(tmp_path: Path) -> None:
+    model = FakeModelProvider(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="write-1",
+                        name="edit_file",
+                        arguments={"path": "new.py", "old_text": "", "new_text": "value = 1\n"},
+                    )
+                ]
+            )
+        ]
+    )
+    manager = RunManager(lambda: model, model_name="fake-model", default_workspace=tmp_path)
+    app = create_app(manager)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/api/runs",
+            json={"task": "wait for approval", "workspace": str(tmp_path)},
+        )
+        run_id = created.json()["run_id"]
+        await _wait_for_status(manager, run_id, "waiting_approval")
+        approval_id = manager.get_run(run_id).pending_approval.approval_id
+
+        cancelled = await client.post(f"/api/runs/{run_id}/cancel")
+        stale_approval = await client.post(
+            f"/api/runs/{run_id}/approval",
+            json={"approval_id": approval_id, "approved": True},
+        )
+
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
+        assert cancelled.json()["pending_approval"] is None
+        assert stale_approval.status_code == 409
+        assert not (tmp_path / "new.py").exists()
+
+    await manager.shutdown()
+
+
+async def test_web_cancels_queued_run_before_execution_starts(tmp_path: Path) -> None:
+    manager = RunManager(
+        lambda: FakeModelProvider([ModelResponse(content="should not run")]),
+        model_name="fake-model",
+        default_workspace=tmp_path,
+    )
+
+    created = await manager.create_run(
+        CreateRunRequest(task="cancel while queued", workspace=str(tmp_path))
+    )
+    cancelled = await manager.cancel_run(created.run_id)
+
+    assert cancelled.status == "cancelled"
+    checkpoint = SqliteCheckpointStore(
+        tmp_path / ".minicode" / "checkpoints.db"
+    ).load(created.run_id)
+    assert checkpoint is not None
+    assert checkpoint.status == "cancelled"
+    assert [message.role for message in checkpoint.messages] == ["system", "user"]
+    assert "Runtime environment:" in checkpoint.messages[0].content
+    assert checkpoint.messages[1].content == "cancel while queued"
+
     await manager.shutdown()

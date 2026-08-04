@@ -16,7 +16,15 @@ from minicode_agent.persistence import (
     SqliteRunStore,
     StoredRun,
 )
-from minicode_agent.runtime import AgentConfig, AgentRuntime, ToolCall
+from minicode_agent.runtime import (
+    AgentConfig,
+    AgentRuntime,
+    Message,
+    RunCheckpoint,
+    RunStatus,
+    TokenUsage,
+    ToolCall,
+)
 from minicode_agent.security import PermissionLevel, PermissionPolicy, Workspace
 from minicode_agent.tools import create_default_registry
 from minicode_agent.web.models import ApprovalView, CreateRunRequest, ResumeRunRequest, RunView
@@ -39,6 +47,7 @@ class _RunRecord:
     config: AgentConfig
     pending: _PendingApproval | None = None
     task_handle: asyncio.Task[None] | None = None
+    cancel_reason: str | None = None
 
 
 class _WebApprover:
@@ -162,6 +171,42 @@ class RunManager:
         record.task_handle = asyncio.create_task(self._execute(record, stored.task, resume=True))
         return self.get_run(run_id)
 
+    async def cancel_run(self, run_id: str) -> RunView:
+        store = self._find_store(run_id)
+        stored = store.get_run(run_id)
+        if stored is None:
+            raise KeyError(f"run not found: {run_id}")
+        if stored.source != "web":
+            raise ValueError("CLI runs cannot be cancelled from the Web Console")
+        record = self._records.get(run_id)
+        task = record.task_handle if record is not None else None
+        if (
+            record is None
+            or task is None
+            or task.done()
+            or stored.status
+            in {
+                "completed",
+                "step_limit",
+                "token_limit",
+                "tool_error",
+                "failed",
+                "cancelled",
+            }
+        ):
+            raise ValueError("run is not active")
+
+        record.cancel_reason = "user_requested"
+        self._append_event(
+            record,
+            "run_cancel_requested",
+            {"reason": record.cancel_reason},
+        )
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        self._ensure_cancelled(record)
+        return self.get_run(run_id)
+
     def resolve_approval(self, run_id: str, approval_id: str, approved: bool) -> RunView:
         stored = self._find_store(run_id).get_run(run_id)
         if stored is None:
@@ -188,14 +233,20 @@ class RunManager:
 
     async def shutdown(self) -> None:
         active = [
-            record.task_handle
+            record
             for record in self._records.values()
             if record.task_handle is not None and not record.task_handle.done()
         ]
-        for task in active:
-            task.cancel()
+        for record in active:
+            record.cancel_reason = record.cancel_reason or "server_shutdown"
+            record.task_handle.cancel()
         if active:
-            await asyncio.gather(*active, return_exceptions=True)
+            await asyncio.gather(
+                *(record.task_handle for record in active if record.task_handle is not None),
+                return_exceptions=True,
+            )
+            for record in active:
+                self._ensure_cancelled(record)
 
     async def _execute(self, record: _RunRecord, task: str, *, resume: bool) -> None:
         self._append_event(record, "run_status", {"status": "running"})
@@ -223,7 +274,13 @@ class RunManager:
             else:
                 await runtime.run(task, run_id=record.run_id)
         except asyncio.CancelledError:
-            self._append_event(record, "run_status", {"status": "cancelled"})
+            try:
+                runtime.cancel(
+                    record.run_id,
+                    reason=record.cancel_reason or "task_cancelled",
+                )
+            except ValueError:
+                pass
             raise
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
@@ -236,6 +293,47 @@ class RunManager:
 
     def _append_event(self, record: _RunRecord, event_type: str, data: dict) -> None:
         self._store_for_workspace(record.workspace).append_event(record.run_id, event_type, data)
+
+    def _ensure_cancelled(self, record: _RunRecord) -> None:
+        store = self._store_for_workspace(record.workspace)
+        stored = store.get_run(record.run_id)
+        if stored is None or stored.status == RunStatus.CANCELLED.value:
+            return
+
+        checkpoint_store = SqliteCheckpointStore(
+            record.workspace / ".minicode" / "checkpoints.db"
+        )
+        checkpoint = checkpoint_store.load(record.run_id)
+        if checkpoint is None:
+            checkpoint = RunCheckpoint(
+                run_id=record.run_id,
+                task=stored.task,
+                status=RunStatus.CANCELLED.value,
+                messages=[
+                    Message(role="system", content=record.config.system_prompt),
+                    Message(role="user", content=stored.task),
+                ],
+                steps=0,
+                usage=TokenUsage(),
+                trace_sequence=0,
+            )
+        else:
+            checkpoint = checkpoint.model_copy(
+                update={"status": RunStatus.CANCELLED.value, "error": None}
+            )
+        checkpoint_store.save(checkpoint)
+        store.append_event(
+            record.run_id,
+            "run_cancelled",
+            {
+                "status": RunStatus.CANCELLED.value,
+                "reason": record.cancel_reason or "task_cancelled",
+                "steps": checkpoint.steps,
+                "usage": checkpoint.usage.model_dump(),
+                "output": checkpoint.output,
+                "error": None,
+            },
+        )
 
     def _config(
         self,
