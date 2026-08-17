@@ -58,7 +58,7 @@ PowerShell 执行后端，不会隐式转交给 `cmd.exe`。
 在 PowerShell 中首次安装和构建：
 
 ```powershell
-git clone https://github.com/anqi399/minicode-agent.git
+git clone https://github.com/lucying-y/minicode-agent.git
 Set-Location minicode-agent
 uv sync --all-groups
 

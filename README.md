@@ -54,7 +54,7 @@ verification all use that explicit backend instead of an implicit `cmd.exe` pare
 Run the initial setup from PowerShell:
 
 ```powershell
-git clone https://github.com/anqi399/minicode-agent.git
+git clone https://github.com/lucying-y/minicode-agent.git
 Set-Location minicode-agent
 uv sync --all-groups
 
