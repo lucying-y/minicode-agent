@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -42,6 +43,35 @@ def test_powershell_invocation_is_explicit_utf8_and_noninteractive() -> None:
     assert "Get-Location" in invocation[-1]
     assert backend.demo_command == "Get-Location"
     assert "PowerShell syntax" in backend.tool_description
+
+
+async def test_windows_backend_forces_python_utf8_environment(monkeypatch, tmp_path: Path) -> None:
+    backend = PowerShellBackend(
+        ShellInfo(
+            platform="windows",
+            operating_system="Windows 11",
+            kind="powershell",
+            executable="pwsh.exe",
+            name="PowerShell",
+        )
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "legacy"
+
+    await backend._start("Get-Location", tmp_path, environment)
+
+    child_environment = captured["kwargs"]["env"]
+    assert child_environment["PYTHONIOENCODING"] == "utf-8"
+    assert child_environment["PYTHONUTF8"] == "1"
+    assert environment["PYTHONIOENCODING"] == "legacy"
 
 
 def test_posix_invocation_uses_explicit_shell() -> None:

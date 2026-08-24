@@ -74,16 +74,18 @@ class ShellBackend(ABC):
         environment: dict[str, str] | None = None,
     ) -> CommandResult:
         process = await self._start(command, cwd, environment)
+        communication = asyncio.create_task(process.communicate())
         try:
             output, _ = await asyncio.wait_for(
-                process.communicate(),
-                timeout=timeout_seconds,
+                asyncio.shield(communication), timeout=timeout_seconds
             )
         except asyncio.CancelledError:
             await self._terminate_tree(process)
+            await self._finish_communication(communication)
             raise
         except TimeoutError:
             await self._terminate_tree(process)
+            await self._finish_communication(communication)
             return CommandResult(
                 output=f"command timed out after {timeout_seconds}s",
                 exit_code=None,
@@ -114,11 +116,15 @@ class ShellBackend(ABC):
             "stdout": asyncio.subprocess.PIPE,
             "stderr": asyncio.subprocess.STDOUT,
         }
-        if environment is not None:
-            options["env"] = environment
         if self.info.platform == "windows":
+            resolved_environment = os.environ.copy() if environment is None else environment.copy()
+            resolved_environment["PYTHONIOENCODING"] = "utf-8"
+            resolved_environment["PYTHONUTF8"] = "1"
+            options["env"] = resolved_environment
             options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         else:
+            if environment is not None:
+                options["env"] = environment
             options["start_new_session"] = True
         return await asyncio.create_subprocess_exec(*invocation, **options)
 
@@ -134,7 +140,16 @@ class ShellBackend(ABC):
                         process.kill()
                     except ProcessLookupError:
                         pass
-        await process.communicate()
+
+    @staticmethod
+    async def _finish_communication(
+        communication: asyncio.Task[tuple[bytes, bytes | None]],
+    ) -> None:
+        try:
+            await asyncio.wait_for(asyncio.shield(communication), timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            communication.cancel()
+            await asyncio.gather(communication, return_exceptions=True)
 
 
 class PosixShellBackend(ShellBackend):
