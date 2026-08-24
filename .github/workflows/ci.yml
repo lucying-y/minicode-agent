@@ -16,8 +16,8 @@ jobs:
           - macos-latest
           - windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           python-version: "3.12"
@@ -41,8 +41,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -51,5 +51,7 @@ jobs:
         run: npm ci
       - name: Type check
         run: npm run check
+      - name: Test
+        run: npm test
       - name: Build
         run: npm run build

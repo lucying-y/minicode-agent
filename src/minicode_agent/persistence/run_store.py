@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from minicode_agent.artifacts import extract_test_result
 from minicode_agent.persistence.trace import JsonlTraceSink, TraceEvent
 
 
@@ -36,6 +37,7 @@ class StoredRun(BaseModel):
     run_id: str
     source: Literal["cli", "web"]
     mode: Literal["task", "chat"]
+    approval_mode: Literal["ask", "auto", "read_only"]
     task: str
     workspace: str
     model_name: str
@@ -335,6 +337,7 @@ class SqliteRunStore:
             run_id=row["run_id"],
             source=row["source"],
             mode=config.get("mode", "task"),
+            approval_mode=config.get("approval_mode", "ask"),
             task=row["task"],
             workspace=row["workspace"],
             model_name=row["model_name"],
@@ -384,6 +387,14 @@ class PersistentRunRecorder:
             runtime_sequence=event.sequence,
             timestamp=event.timestamp,
         )
+        if event.event_type == "tool_result":
+            test_result = extract_test_result(event.data)
+            if test_result is not None:
+                self.store.append_event(
+                    event.run_id,
+                    "test_result",
+                    test_result.model_dump(mode="json"),
+                )
 
     def on_model_delta(self, run_id: str, step: int, delta: str) -> None:
         if self._delta_run_id is not None and (

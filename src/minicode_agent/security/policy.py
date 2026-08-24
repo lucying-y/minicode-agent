@@ -14,6 +14,14 @@ class PermissionLevel(StrEnum):
     EXECUTE = "execute"
 
 
+class ApprovalMode(StrEnum):
+    """How a run handles otherwise permitted state-changing tools."""
+
+    ASK = "ask"
+    AUTO = "auto"
+    READ_ONLY = "read_only"
+
+
 class PermissionDenied(RuntimeError):
     """Raised when a tool call is not authorized."""
 
@@ -70,8 +78,13 @@ class PermissionPolicy:
             return True
         return "start-process" in normalized and "-verb runas" in normalized
 
-    def __init__(self, approver: ApprovalHandler | None = None) -> None:
+    def __init__(
+        self,
+        approver: ApprovalHandler | None = None,
+        mode: ApprovalMode = ApprovalMode.ASK,
+    ) -> None:
         self.approver = approver
+        self.mode = mode
 
     async def authorize(self, call: ToolCall, permission: PermissionLevel) -> None:
         if permission is PermissionLevel.READ:
@@ -81,6 +94,11 @@ class PermissionPolicy:
             command = str(call.arguments.get("command", ""))
             if self._blocked_command(command):
                 raise PermissionDenied("command matches a blocked high-risk pattern")
+
+        if self.mode is ApprovalMode.READ_ONLY:
+            raise PermissionDenied("run is read-only; state-changing tools are disabled")
+        if self.mode is ApprovalMode.AUTO:
+            return
 
         if self.approver is None:
             raise PermissionDenied(f"{permission.value} tool requires explicit approval")

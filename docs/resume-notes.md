@@ -20,8 +20,12 @@ Only claim behavior that is present in the repository and backed by tests or an 
   with executable acceptance checks, and reports success rate, steps, Token usage, and latency.
 - Connected the real OpenAI-compatible provider and passed 3/3 tasks in the self-authored version 1
   suite with `gpt-5.6-sol`: 5 average model steps, 18,415 total Tokens, and 106.14 seconds end to end.
-- Maintained 28 automated tests with 93.97% statement coverage; passed Ruff checks and built both
-  wheel and source distributions with `uv build`.
+- Added task-scoped Git-visible change tracking, structured test-result projection, and Web
+  Changes/Tests views without modifying the target repository's Git index.
+- Implemented ask, auto-approve-allowed, and read-only permission modes while preserving sensitive
+  path checks and an unconditional high-risk command deny list.
+- Maintained 77 passing backend tests and 5 passing frontend tests with 88.72% backend statement
+  coverage; passed Ruff, TypeScript, Vitest, Vite production build, and dependency audit checks.
 
 The preserved baseline is in `benchmarks/gpt-5.6-sol-baseline-20260803.json`. Describe it as a
 "self-authored three-task code-repair suite" rather than a public benchmark. Do not reuse scores

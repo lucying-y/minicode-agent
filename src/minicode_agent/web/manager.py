@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from minicode_agent.artifacts import WorkspaceChangeTracker
 from minicode_agent.execution import ShellBackend, default_shell, platform_system_prompt
 from minicode_agent.models.base import ModelProvider
 from minicode_agent.persistence import (
@@ -25,7 +26,7 @@ from minicode_agent.runtime import (
     TokenUsage,
     ToolCall,
 )
-from minicode_agent.security import PermissionLevel, PermissionPolicy, Workspace
+from minicode_agent.security import ApprovalMode, PermissionLevel, PermissionPolicy, Workspace
 from minicode_agent.tools import create_default_registry
 from minicode_agent.web.models import ApprovalView, CreateRunRequest, ResumeRunRequest, RunView
 
@@ -45,6 +46,7 @@ class _RunRecord:
     run_id: str
     workspace: Path
     config: AgentConfig
+    approval_mode: ApprovalMode
     pending: _PendingApproval | None = None
     task_handle: asyncio.Task[None] | None = None
     cancel_reason: str | None = None
@@ -122,6 +124,13 @@ class RunManager:
     def get_events(self, run_id: str) -> list[dict]:
         return self._find_store(run_id).list_events(run_id)
 
+    def get_artifacts(self, run_id: str, event_type: str) -> list[dict]:
+        return [
+            event["data"]
+            for event in self.get_events(run_id)
+            if event["event_type"] == event_type
+        ]
+
     async def create_run(self, request: CreateRunRequest) -> RunView:
         workspace = Workspace(Path(request.workspace)).root
         config = self._config(
@@ -137,9 +146,14 @@ class RunManager:
             source="web",
             task=request.task,
             model_name=self.model_name,
-            config=config.model_dump(),
+            config=config.model_dump() | {"approval_mode": request.approval_mode.value},
         )
-        record = _RunRecord(run_id=run_id, workspace=workspace, config=config)
+        record = _RunRecord(
+            run_id=run_id,
+            workspace=workspace,
+            config=config,
+            approval_mode=request.approval_mode,
+        )
         self._records[run_id] = record
         self._append_event(record, "run_queued", {"task": request.task})
         record.task_handle = asyncio.create_task(self._execute(record, request.task, resume=False))
@@ -164,8 +178,16 @@ class RunManager:
             max_context_tokens=request.max_context_tokens,
             max_total_tokens=request.max_total_tokens,
         )
-        store.update_config(run_id, config.model_dump())
-        record = _RunRecord(run_id=run_id, workspace=Path(stored.workspace), config=config)
+        store.update_config(
+            run_id,
+            config.model_dump() | {"approval_mode": request.approval_mode.value},
+        )
+        record = _RunRecord(
+            run_id=run_id,
+            workspace=Path(stored.workspace),
+            config=config,
+            approval_mode=request.approval_mode,
+        )
         self._records[run_id] = record
         self._append_event(record, "run_resume_queued", {"max_steps": request.max_steps})
         record.task_handle = asyncio.create_task(self._execute(record, stored.task, resume=True))
@@ -249,6 +271,7 @@ class RunManager:
                 self._ensure_cancelled(record)
 
     async def _execute(self, record: _RunRecord, task: str, *, resume: bool) -> None:
+        change_tracker = WorkspaceChangeTracker(record.workspace)
         self._append_event(record, "run_status", {"status": "running"})
         provider = self.provider_factory()
         store = self._store_for_workspace(record.workspace)
@@ -260,7 +283,10 @@ class RunManager:
             provider,
             create_default_registry(
                 record.workspace,
-                PermissionPolicy(_WebApprover(self, record)),
+                PermissionPolicy(
+                    _WebApprover(self, record),
+                    mode=record.approval_mode,
+                ),
                 self.shell,
             ),
             config=record.config,
@@ -290,6 +316,11 @@ class RunManager:
             close = getattr(provider, "aclose", None)
             if close is not None:
                 await close()
+            self._append_event(
+                record,
+                "workspace_changes",
+                change_tracker.collect().model_dump(mode="json"),
+            )
 
     def _append_event(self, record: _RunRecord, event_type: str, data: dict) -> None:
         self._store_for_workspace(record.workspace).append_event(record.run_id, event_type, data)
@@ -382,6 +413,7 @@ class RunManager:
             run_id=run.run_id,
             source=run.source,
             mode=run.mode,
+            approval_mode=run.approval_mode,
             task=run.task,
             workspace=run.workspace,
             model_name=run.model_name,

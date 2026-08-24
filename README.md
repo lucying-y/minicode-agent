@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[![CI](https://github.com/lucying-y/minicode-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/lucying-y/minicode-agent/actions/workflows/ci.yml)
+
 MiniCode Agent is a small, inspectable coding-agent runtime for repository tasks. It is an
 independent implementation focused on the engineering behind an agent: control flow, structured
 tools, context limits, permissions, provider adaptation, and execution traces.
@@ -18,7 +20,7 @@ an agent framework.
 - Provider-neutral messages plus an OpenAI-compatible chat-completions adapter.
 - Pydantic tool arguments exposed to models as JSON Schema.
 - Workspace-scoped `read_file`, `list_files`, `search_text`, `edit_file`, and `run_shell` tools.
-- Read/write/execute permission levels and human approval for state-changing operations.
+- Read/write/execute permission levels with ask, auto-approve-allowed, and read-only modes.
 - Exact, unique text replacement to make edits predictable and reviewable.
 - Append-only JSONL traces for model responses, tool results, usage, timing, and terminal status.
 - SQLite checkpoints that preserve consistent messages, cumulative usage, and trace sequence.
@@ -30,6 +32,8 @@ an agent framework.
   and checkpoint resume.
 - Cancellation during model requests, pending approvals, and shell execution, plus persisted CLI
   interruption state on `Ctrl+C`.
+- Task-scoped Git-visible file snapshots with structured changes, line counts, and unified diffs.
+- Structured test-command results with exit code, duration, and pass/fail/skip counts in the Web UI.
 
 ## Quick start
 
@@ -153,6 +157,16 @@ uv run minicode run "Inspect the project and fix the failing tests" --workspace 
 File writes and shell commands require confirmation. `--yes` skips interactive confirmation for
 trusted tasks, but commands matching the built-in high-risk deny list remain blocked.
 
+Select the policy explicitly when needed:
+
+```bash
+uv run minicode run "Inspect only" --workspace /path/to/repo --approval-mode read_only
+uv run minicode run "Fix and test" --workspace /path/to/repo --approval-mode auto
+```
+
+`--yes` remains an alias for `--approval-mode auto`. No mode bypasses workspace, sensitive-path,
+or blocked-command checks.
+
 Each run prints a `run_id`. A run stopped by a step limit, token limit, tool error, or provider error
 can continue from its last consistent model/tool boundary after raising the relevant limit or fixing
 the external problem:
@@ -225,6 +239,10 @@ safe. Use a disposable container or virtual machine for untrusted repositories a
 ```bash
 uv run ruff check .
 uv run pytest --cov
+cd web
+npm run check
+npm test
+npm run build
 ```
 
 Tests use temporary workspaces, mocked HTTP responses, and a deterministic model. They cover the
@@ -239,6 +257,7 @@ src/minicode_agent/
 ├── runtime/       # agent loop, state types, context budgeting
 ├── models/        # provider protocol, fake model, OpenAI-compatible adapter
 ├── tools/         # schemas, registry, filesystem and shell tools
+├── artifacts/     # task-scoped file changes and structured test results
 ├── security/      # workspace boundary and permission policy
 ├── persistence/   # JSONL traces, SQLite checkpoints, and the shared run timeline store
 ├── evaluation/    # task schemas, isolated execution, verification, reports
@@ -256,11 +275,12 @@ web/               # React, TypeScript and Vite console
   by Web runs during that server process. Existing JSONL traces are not backfilled into `runs.db`.
 - Web cancellation controls only tasks owned by the current server process and cannot roll back file
   changes or other side effects that already completed.
-- There is no Git diff view, container sandbox, multi-user authentication, MCP, or sub-agent
-  orchestration yet.
+- Change capture covers Git-visible, non-ignored files. Files over 1 MB or containing NUL bytes are
+  reported as binary changes without a text diff.
+- There is no container sandbox, multi-user authentication, MCP, or sub-agent orchestration yet.
 
 ## Roadmap
 
-1. Expand evaluation tasks and compare multiple model/configuration combinations.
-2. Add structured Git diff and test-result views.
-3. Add an isolated Docker execution environment.
+1. Add an isolated Docker execution environment.
+2. Expand evaluation tasks and compare multiple model/configuration combinations.
+3. Add provider retries, tokenizer-aware budgeting, and trace secret redaction.

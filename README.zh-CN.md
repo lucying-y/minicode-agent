@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[![CI](https://github.com/lucying-y/minicode-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/lucying-y/minicode-agent/actions/workflows/ci.yml)
+
 MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding Agent Runtime。本项目独立实现，
 重点关注 Agent 背后的工程机制，包括执行流程、结构化工具、上下文限制、权限控制、模型适配和
 运行轨迹。
@@ -23,7 +25,7 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 - 使用 Pydantic 定义工具参数，并以 JSON Schema 形式提供给模型。
 - 提供限定在工作区内的 `read_file`、`list_files`、`search_text`、`edit_file` 和
   `run_shell` 工具。
-- 支持读、写、执行三级权限，并在状态变更操作前请求人工确认。
+- 支持读、写、执行三级权限，以及人工审批、自动批准允许项和只读三种运行模式。
 - 使用唯一文本精确替换，使文件修改过程更可预测、便于审查。
 - 使用只追加的 JSONL 轨迹记录模型响应、工具结果、Token 用量、耗时和最终状态。
 - 使用 SQLite 保存一致执行边界上的消息、累计用量和轨迹序号，支持断点恢复。
@@ -34,6 +36,8 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 - 提供本地 React Web Console，通过 FastAPI、SSE、网页审批、主动取消和 Checkpoint 恢复观察与
   控制任务。
 - Web 任务可在模型请求、等待审批或 Shell 执行阶段取消；CLI 使用 `Ctrl+C` 时也会保存取消状态。
+- 以任务启动时的 Git 可见文件为基线，生成结构化文件变更、增删行和 Unified Diff。
+- 自动识别常见测试命令，将退出码、耗时、通过/失败/跳过数量投影到 Web 测试视图。
 
 ## 快速开始
 
@@ -169,6 +173,16 @@ uv run minicode run "检查项目并修复失败的测试" --workspace /path/to/
 文件写入和 Shell 命令默认需要人工确认。对于可信任务，可以使用 `--yes` 跳过交互确认，
 但匹配内置高风险拒绝规则的命令仍会被阻止。
 
+也可以显式选择审批模式：
+
+```bash
+uv run minicode run "只检查仓库" --workspace /path/to/repo --approval-mode read_only
+uv run minicode run "修复并测试" --workspace /path/to/repo --approval-mode auto
+```
+
+`--yes` 是 `--approval-mode auto` 的兼容别名。三种模式都不能绕过工作区、敏感路径和高风险
+命令限制。
+
 每次运行都会输出一个 `run_id`。如果任务因步数限制、Token 限制、工具错误或模型服务错误
 而停止，可在调整限制或修复外部问题后，从最后一个一致的模型/工具边界继续执行：
 
@@ -236,6 +250,10 @@ Runtime 会在内存中保留完整执行轨迹。每次请求模型前，上下
 ```bash
 uv run ruff check .
 uv run pytest --cov
+cd web
+npm run check
+npm test
+npm run build
 ```
 
 测试使用临时工作区、模拟 HTTP 响应和确定性模型，覆盖 Agent Loop、运行限制、上下文选择、
@@ -249,6 +267,7 @@ src/minicode_agent/
 ├── runtime/       # Agent Loop、状态类型、上下文预算
 ├── models/        # 模型协议、Fake Provider、OpenAI 兼容适配器
 ├── tools/         # 工具 Schema、注册中心、文件系统与 Shell 工具
+├── artifacts/     # 任务级文件变更快照与结构化测试结果
 ├── security/      # 工作区边界与权限策略
 ├── persistence/   # JSONL 轨迹、SQLite Checkpoint 与共享运行时间线
 ├── evaluation/    # 任务定义、隔离执行、结果校验与报告
@@ -265,10 +284,12 @@ web/               # React、TypeScript 与 Vite 控制台
   JSONL Trace 不会自动回填到 `.minicode/runs.db`。
 - Web 只能取消当前服务进程创建的任务，不能从网页中断另一个 CLI 进程；取消也不会回滚已经发生的
   文件修改或其他副作用。
-- 当前没有 Git Diff 视图、Docker 沙箱、多用户认证、MCP 或多 Agent 编排。
+- 任务变更只覆盖 Git 可见且未忽略的文件；超过 1 MB 或包含 NUL 的文件只记录二进制变化，不生成
+  文本 Diff。
+- 当前没有 Docker 沙箱、多用户认证、MCP 或多 Agent 编排。
 
 ## 后续计划
 
-1. 扩充评测任务，并比较不同模型和运行参数组合。
-2. 增加结构化 Git Diff 和测试结果视图。
-3. 增加基于 Docker 的隔离执行环境。
+1. 增加基于 Docker 的隔离执行环境。
+2. 扩充评测任务，并比较不同模型和运行参数组合。
+3. 增加模型请求重试、Token 精确计算和 Trace 敏感信息脱敏。

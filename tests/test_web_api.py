@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from pathlib import Path
 
 import httpx
@@ -20,6 +21,127 @@ async def _wait_for_status(
             return
         await asyncio.sleep(0.005)
     raise AssertionError(f"run did not reach {expected}: {manager.get_run(run_id).status}")
+
+
+def _initialize_git_repository(workspace: Path) -> None:
+    subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=workspace, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+    )
+
+
+async def test_web_auto_mode_records_changes_and_test_results(tmp_path: Path) -> None:
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    _initialize_git_repository(tmp_path)
+    model = FakeModelProvider(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="edit-auto",
+                        name="edit_file",
+                        arguments={
+                            "path": "app.py",
+                            "old_text": "value = 1",
+                            "new_text": "value = 2",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="test-auto",
+                        name="run_shell",
+                        arguments={"command": "python -m pytest --version"},
+                    )
+                ]
+            ),
+            ModelResponse(content="done"),
+        ]
+    )
+    manager = RunManager(lambda: model, model_name="fake-model", default_workspace=tmp_path)
+    app = create_app(manager)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/api/runs",
+            json={
+                "task": "edit and test",
+                "workspace": str(tmp_path),
+                "approval_mode": "auto",
+            },
+        )
+        run_id = created.json()["run_id"]
+        assert created.json()["approval_mode"] == "auto"
+        await _wait_for_status(manager, run_id, "completed")
+
+        events = (await client.get(f"/api/runs/{run_id}/events/history")).json()
+        changes = (await client.get(f"/api/runs/{run_id}/changes")).json()
+        tests = (await client.get(f"/api/runs/{run_id}/tests")).json()
+
+    assert "approval_required" not in [event["event_type"] for event in events]
+    assert target.read_text(encoding="utf-8") == "value = 2\n"
+    assert changes[-1]["files"][0]["path"] == "app.py"
+    assert changes[-1]["files"][0]["status"] == "modified"
+    assert tests[0]["command"] == "python -m pytest --version"
+    assert tests[0]["status"] == "passed"
+    await manager.shutdown()
+
+
+async def test_web_read_only_mode_denies_edits_without_prompt(tmp_path: Path) -> None:
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    model = FakeModelProvider(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="edit-read-only",
+                        name="edit_file",
+                        arguments={
+                            "path": "app.py",
+                            "old_text": "value = 1",
+                            "new_text": "value = 2",
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(content="edit denied"),
+        ]
+    )
+    manager = RunManager(lambda: model, model_name="fake-model", default_workspace=tmp_path)
+    created = await manager.create_run(
+        CreateRunRequest(
+            task="inspect without editing",
+            workspace=str(tmp_path),
+            approval_mode="read_only",
+        )
+    )
+    await _wait_for_status(manager, created.run_id, "completed")
+
+    events = manager.get_events(created.run_id)
+    tool_result = next(event for event in events if event["event_type"] == "tool_result")
+    assert "approval_required" not in [event["event_type"] for event in events]
+    assert "read-only" in tool_result["data"]["result"]["content"]
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
+    await manager.shutdown()
 
 
 async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
@@ -97,7 +219,7 @@ async def test_web_run_approval_events_and_resume(tmp_path: Path) -> None:
         assert "approval_required" in event_types
         assert "approval_resolved" in event_types
         assert "run_resumed" in event_types
-        assert event_types[-1] == "run_finished"
+        assert event_types[-2:] == ["run_finished", "workspace_changes"]
 
     await manager.shutdown()
 
@@ -153,8 +275,11 @@ async def test_web_publishes_streaming_model_output(tmp_path: Path) -> None:
             if event["event_type"] == "model_output_delta"
         ]
         assert "".join(deltas) == "streamed web response"
-        assert events[-2]["event_type"] == "model_response"
-        assert events[-1]["event_type"] == "run_finished"
+        assert [event["event_type"] for event in events[-3:]] == [
+            "model_response",
+            "run_finished",
+            "workspace_changes",
+        ]
         first_request, _ = model.requests[0]
         assert "Runtime environment:" in first_request[0].content
         assert str(tmp_path) in first_request[0].content
@@ -263,7 +388,7 @@ async def test_web_cancels_model_request_and_resumes_checkpoint(tmp_path: Path) 
         events = (await client.get(f"/api/runs/{run_id}/events/history")).json()
         event_types = [event["event_type"] for event in events]
         assert "run_cancel_requested" in event_types
-        assert event_types[-1] == "run_cancelled"
+        assert event_types[-2:] == ["run_cancelled", "workspace_changes"]
 
         resumed = await client.post(
             f"/api/runs/{run_id}/resume",

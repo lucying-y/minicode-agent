@@ -1,4 +1,4 @@
-import type { ConsoleEvent, CreateRunInput, Health, Run } from "./types";
+import type { ConsoleEvent, CreateRunInput, Health, Run, TestResult, WorkspaceChanges } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -18,6 +18,8 @@ export const api = {
   getRun: (runId: string) => request<Run>(`/api/runs/${runId}`),
   getEvents: (runId: string) =>
     request<ConsoleEvent[]>(`/api/runs/${runId}/events/history`),
+  getChanges: (runId: string) => request<WorkspaceChanges[]>(`/api/runs/${runId}/changes`),
+  getTests: (runId: string) => request<TestResult[]>(`/api/runs/${runId}/tests`),
   createRun: (input: CreateRunInput) =>
     request<Run>("/api/runs", { method: "POST", body: JSON.stringify(input) }),
   resolveApproval: (runId: string, approvalId: string, approved: boolean) =>
@@ -34,6 +36,7 @@ export const api = {
         max_steps: Math.max(run.max_steps + 12, run.steps + 1),
         max_context_tokens: run.max_context_tokens,
         max_total_tokens: run.max_total_tokens,
+        approval_mode: run.approval_mode,
       }),
     }),
 };

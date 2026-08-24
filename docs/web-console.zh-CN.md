@@ -136,11 +136,16 @@ uv run minicode web --port 8001 --workspace /path/to/repository
 
 1. 左侧运行列表：展示工作区中持久化的 CLI/Web 任务，每 2 秒刷新一次，可按任务、工作区、来源或
    模型搜索；
-2. 中间运行区：显示任务状态、步数、Token、事件数量和实时执行时间线；
+2. 中间运行区：显示任务状态、步数、Token、事件数量，以及时间线、变更、测试三个视图；
 3. 右侧检查区：显示运行配置、待审批操作和选中事件的完整 JSON。
 
 一次模型步骤产生的工具请求、审批和工具结果会组成一个默认折叠的工具调用组。展开后仍可逐条
 选择事件；事件详情标题旁的复制按钮会复制当前显示的 JSON 数据。
+
+“变更”视图以本次执行开始时的 Git 可见文件为基线，展示新增、修改、删除、增删行和 Unified
+Diff；原本已经存在的脏文件不会仅因为状态为 modified 就被算成本次变化。“测试”视图会识别
+Pytest、Vitest/Jest、npm/yarn/pnpm test、Go、Cargo、.NET、Maven 和 Gradle 等测试命令，展示
+退出码、耗时和可解析的通过/失败/跳过数量。
 
 点击“新任务”后填写：
 
@@ -149,6 +154,7 @@ uv run minicode web --port 8001 --workspace /path/to/repository
 | 最大步数 | 12 | 1 到 100 | 最多请求模型多少轮 |
 | 上下文 Token | 32,000 | 128 到 1,000,000 | 单次模型请求可见历史的估算预算 |
 | 总 Token | 100,000 | 1 到 10,000,000 | 整个运行累计模型 Token 上限 |
+| 审批模式 | 人工审批 | 人工审批/自动批准允许项/只读 | 控制 WRITE 和 EXECUTE 工具 |
 
 工作区必须是服务所在机器上的现有目录。服务会在该目录下创建 `.minicode/` 保存共享时间线、
 Trace 和 Checkpoint。来源徽标会标明任务由 `CLI` 还是 `WEB` 发起；CLI 任务只用于观察，不能
@@ -178,6 +184,7 @@ flowchart LR
     Approver --> Manager
     Runtime --> Trace["JSONL Trace"]
     Runtime --> Checkpoint["SQLite Checkpoint"]
+    Runtime --> Artifacts["Changes / Test results"]
 ```
 
 前端不直接调用模型，也不执行工具。所有模型和工具操作仍由现有 `AgentRuntime` 完成。
@@ -199,6 +206,7 @@ Web 层只负责创建后台任务、转发事件、等待审批结果和把状�
   -> 浏览器提交批准或拒绝
   -> Runtime 继续执行工具和下一轮模型
   -> completed 或其他终态
+  -> 记录 workspace_changes 并展示任务级 Diff
 ```
 
 每条运行有两个事件序号：
@@ -246,6 +254,8 @@ CLI 的任务句柄；CLI 使用 `Ctrl+C` 时会自行记录取消状态。
 | `POST` | `/api/runs` | 创建并异步启动任务 |
 | `GET` | `/api/runs/{id}` | 查询一次运行的最新摘要 |
 | `GET` | `/api/runs/{id}/events/history` | 查询 Run Store 中的完整时间线事件 |
+| `GET` | `/api/runs/{id}/changes` | 查询任务分段产生的结构化文件变化 |
+| `GET` | `/api/runs/{id}/tests` | 查询识别出的结构化测试结果 |
 | `GET` | `/api/runs/{id}/events` | 订阅 SSE 实时事件 |
 | `POST` | `/api/runs/{id}/approval` | 批准或拒绝当前 Web 任务的待审批操作 |
 | `POST` | `/api/runs/{id}/resume` | 使用新限制从 Checkpoint 恢复 Web 任务 |
@@ -259,7 +269,8 @@ CLI 的任务句柄；CLI 使用 `Ctrl+C` 时会自行记录取消状态。
   "workspace": "/absolute/path/to/repository",
   "max_steps": 12,
   "max_context_tokens": 32000,
-  "max_total_tokens": 100000
+  "max_total_tokens": 100000,
+  "approval_mode": "ask"
 }
 ```
 
@@ -288,7 +299,7 @@ Web 服务重启后仍能看到默认工作区的历史摘要和事件，但内�
 
 - 文件工具只能访问选定工作区，并拒绝 `.env`、`.git`、`.ssh`、`.npmrc` 等敏感路径；
 - `.env.example`、`.env.sample` 和 `.env.template` 允许读取，便于模型理解配置格式；
-- 写文件和执行 Shell 需要网页审批，内置高风险命令仍会直接拒绝；
+- 人工审批模式下写文件和执行 Shell 需要网页确认，内置高风险命令始终直接拒绝；
 - Shell 命令仍以当前系统用户身份运行，网页审批和字符串拒绝规则不是沙箱；
 - Trace 会保存工具参数与结果，应视为可能包含项目敏感信息的本地日志。
 
@@ -297,14 +308,14 @@ Web 服务重启后仍能看到默认工作区的历史摘要和事件，但内�
 权限类型和运行时审批方式是两个不同概念：
 
 - 工具权限分为 `READ`、`WRITE` 和 `EXECUTE`；
-- CLI 默认是人工审批：读取自动允许，写入和执行在终端等待 `y/N`；
-- CLI 的 `--yes` 是自动批准普通写入和执行，不是无边界的“完全访问”；
-- Web Console 当前固定为人工网页审批，尚未提供运行前的审批模式选择；
+- CLI 和 Web 默认是人工审批：读取自动允许，写入和执行等待用户确认；
+- `--approval-mode auto` 自动批准通过工作区和风险检查的普通写入与执行；CLI 的 `--yes` 是其
+  兼容别名；
+- `--approval-mode read_only` 或 Web 的“只读”模式会拒绝全部 WRITE 和 EXECUTE 工具；
 - 当前没有由另一个模型判断风险的“替我审批”模式。
 
-无论使用人工审批还是 CLI `--yes`，工作区边界、敏感路径拒绝和高风险 Shell 命令拒绝都继续
-生效。后续如果增加模式选择，建议使用“人工审批 / 自动批准允许项 / 只读”这样的准确命名，避免
-把应用层自动批准误称为完整系统权限。
+无论选择哪种模式，工作区边界、敏感路径拒绝和高风险 Shell 命令拒绝都继续生效。自动批准允许项
+不是完整系统权限，也不是操作系统沙箱。
 
 真实任务应使用可信仓库。对不可信代码需要 Docker 或虚拟机隔离，并限制挂载目录、网络、CPU、
 内存和执行时间。
@@ -323,6 +334,7 @@ uv run pytest --cov
 ```bash
 cd web
 npm run check
+npm test
 npm run build
 ```
 
@@ -333,14 +345,16 @@ npm run build
 - `src/minicode_agent/web/app.py`：REST、SSE 和静态文件服务；
 - `src/minicode_agent/web/manager.py`：运行状态、后台任务、事件广播和网页审批；
 - `src/minicode_agent/web/models.py`：API 请求与响应 Schema；
-- `web/src/App.tsx`：页面状态和主要组件；
+- `web/src/App.tsx`：页面状态、SSE 订阅和整体编排；
+- `web/src/Timeline.tsx`：流式输出合并与可折叠工具时间线；
+- `web/src/RunArtifacts.tsx`：Changes 和 Tests 视图；
+- `web/src/NewRunDialog.tsx`：任务参数与审批模式表单；
 - `web/src/api.ts`：浏览器 API 调用；
 - `web/src/styles.css`：桌面与移动端布局。
 
 ## 11. 当前未实现
 
 - 自动发现未配置的其他工作区；
-- Git Diff 和测试结果的专用视图；
 - 服务商专有的流式协议和非文本内容分片；
 - 多进程任务队列和跨实例事件总线；
 - Docker 执行沙箱；

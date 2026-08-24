@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from minicode_agent.runtime import ToolCall
-from minicode_agent.security import PermissionLevel
+from minicode_agent.security import ApprovalMode, PermissionLevel
 
 
 class CreateRunRequest(BaseModel):
@@ -17,6 +17,7 @@ class CreateRunRequest(BaseModel):
     max_steps: int = Field(default=12, ge=1, le=100)
     max_context_tokens: int = Field(default=32_000, ge=128, le=1_000_000)
     max_total_tokens: int = Field(default=100_000, ge=1, le=10_000_000)
+    approval_mode: ApprovalMode = ApprovalMode.ASK
 
 
 class ResumeRunRequest(BaseModel):
@@ -25,6 +26,7 @@ class ResumeRunRequest(BaseModel):
     max_steps: int = Field(ge=1, le=100)
     max_context_tokens: int = Field(default=32_000, ge=128, le=1_000_000)
     max_total_tokens: int = Field(default=100_000, ge=1, le=10_000_000)
+    approval_mode: ApprovalMode = ApprovalMode.ASK
 
 
 class ApprovalDecision(BaseModel):
@@ -49,6 +51,7 @@ class RunView(BaseModel):
     run_id: str
     source: Literal["cli", "web"]
     mode: Literal["task", "chat"]
+    approval_mode: ApprovalMode
     task: str
     workspace: str
     model_name: str

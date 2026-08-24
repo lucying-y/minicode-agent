@@ -482,10 +482,12 @@ Shell 标准错误会合并到标准输出；非零退出码会令结果的 `is_
 PowerShell 7 `pwsh.exe`，没有 PowerShell 7 时回退到 Windows PowerShell 5.1
 `powershell.exe`。CLI、Web Demo、普通 Agent 工具和 Evaluation 校验共用同一个 Backend。
 
-PowerShell Backend 会设置 UTF-8 输入输出、使用 `-NoProfile` 和 `-NonInteractive`，并把 Shell
+PowerShell Backend 会设置 UTF-8 输入输出，并向子进程注入 `PYTHONUTF8=1` 和
+`PYTHONIOENCODING=utf-8`，使用 `-NoProfile` 和 `-NonInteractive`，并把 Shell
 名称、版本和命令语言加入系统提示。模型因此知道应该使用 PowerShell，而不是先生成 Bash 命令再
 依靠失败结果猜测平台。命令超时时，POSIX 使用进程组终止，Windows 使用精确 PID 调用
-`taskkill /T /F` 终止 PowerShell 及其子进程。
+`taskkill /T /F` 终止 PowerShell 及其子进程。输出读取始终复用同一个 `communicate()` Task，避免
+Windows Proactor 在取消路径中并发读取同一管道。
 
 ## 9. 权限与安全边界
 
@@ -512,20 +514,16 @@ Windows 还会拒绝盘符相对路径（例如 `C:private.txt`）、NTFS Altern
 
 ### 9.2 权限策略
 
-默认权限规则如下：
+权限规则先检查工具等级和高风险命令，再按运行模式处理：
 
 - READ：自动允许；
-- WRITE：需要 Approver 明确允许；
-- EXECUTE：先检查高风险命令，再请求 Approver；
+- WRITE：人工模式需要 Approver；自动模式直接允许；只读模式拒绝；
+- EXECUTE：始终先检查高风险命令，再根据模式请求 Approver、允许或拒绝；
 - 没有配置 Approver 时，所有写入和执行操作都拒绝。
 
-CLI 默认使用 `ConsoleApprover`，把工具参数打印到终端并等待 `y/N`。`--yes` 会自动批准普通
-写入和执行，但无法绕过内置的高风险命令拒绝规则。
-
-Web Console 始终使用 `_WebApprover`，当前没有暴露审批模式开关。项目也没有真正的“完全访问”
-或由另一个模型执行的“替我审批”：`--yes` 只是把 Approver 换成 `AlwaysApprover`，工作区边界、
-敏感路径和高风险命令规则仍然生效。若后续增加 UI 模式，适合明确区分人工审批、自动批准允许项
-和只读模式。
+CLI 和 Web 都支持 `ask`、`auto`、`read_only`。CLI 默认使用 `ConsoleApprover`，Web 的人工模式
+使用 `_WebApprover`；`--yes` 是 `--approval-mode auto` 的兼容别名。项目没有真正的“完全访问”
+或由另一个模型执行的“替我审批”，工作区边界、敏感路径和高风险命令规则始终生效。
 
 当前拒绝规则是对命令字符串中的危险片段进行检查，例如 `rm -rf`、`sudo`、`mkfs`、
 `git reset --hard` 和 `git clean -fd`。Windows 还覆盖 `Remove-Item -Recurse -Force`、
@@ -847,8 +845,7 @@ uv run pytest --cov
 3. Trace 没有通用的秘密信息内容脱敏；
 4. Shell 在宿主机运行，拒绝列表不能替代 Docker 沙箱；
 5. Web 只自动发现默认工作区和本进程已注册工作区，旧 JSONL 不会自动回填共享列表；
-6. Web 不能取消其他进程拥有的 CLI 任务，也没有跨进程任务队列、多用户认证、Git Diff 和测试
-   结果专用视图；
+6. Web 不能取消其他进程拥有的 CLI 任务，也没有跨进程任务队列和多用户认证；
 7. Checkpoint 不能为未记录的文件副作用提供事务回滚；
 8. 文件工具只处理 UTF-8 文本，`edit_file` 只支持唯一精确替换；
 9. 评测集规模很小，不能作为通用 Coding Agent 能力结论；
@@ -883,16 +880,22 @@ flowchart LR
 Checkpoint 事务内，因此取消是“停止继续执行”，不是回滚。
 
 React 前端通过 REST 创建、查询、审批和恢复 Web 任务，通过 SSE 接收增量事件。它展示 CLI/Web
-来源、模型、状态、指标、执行时间线和原始事件 JSON。SSE 从 Run Store 按事件 ID 轮询，因此同一
+来源、模型、状态、指标、执行时间线、任务级文件变化、结构化测试结果和原始事件 JSON。SSE 从
+Run Store 按事件 ID 轮询，因此同一
 工作区中另一个 CLI 进程产生的新事件也会出现。CLI 运行在网页中只读，审批和恢复仍由 CLI 负责。
 
 模型文本分片作为 `model_output_delta` Web 事件实时发送，React 按模型步数合并为一个持续增长的
 输出区域，避免每个分片占据一条时间线记录。高频分片经批量合并后写入 Run Store，但不写入
 JSONL Trace；最终完整 `model_response` 到达后替换临时输出，并按原有流程持久化。
 
+`WorkspaceChangeTracker` 在每个执行段开始前记录 Git 已跟踪和未忽略文件的内容摘要，结束后仅对
+真正发生变化的文件生成 `workspace_changes`。它排除 `.minicode/` 内部数据库，不修改 Git index，
+并将大于 1 MB 或含 NUL 的文件视为二进制。`PersistentRunRecorder` 从 `run_shell` 的
+`tool_result` 派生 `test_result`，因此前端无需解析任意 Shell 文本来识别测试。
+
 当前 API 路径、运行时序、持久化边界和界面操作详见
-[《Web Console 使用与设计说明》](web-console.zh-CN.md)。下一阶段应补充跨工作区索引、Git Diff、
-测试结果视图和 Docker 隔离。
+[《Web Console 使用与设计说明》](web-console.zh-CN.md)。下一阶段应补充跨工作区索引和 Docker
+隔离。
 
 ## 19. 推荐源码阅读顺序
 
@@ -940,5 +943,5 @@ Context 是本次发送给模型的有限消息；Checkpoint 是恢复任务所�
 
 ### 这个项目现在最值得增加什么？
 
-任务取消已经完成。下一步优先增加 Git Diff 和测试结果视图，再增加 Docker 隔离。它们能够在
-保留当前 Runtime 设计的同时，继续补齐真实使用体验和安全边界。
+任务取消、Git Diff、测试结果视图和审批模式已经完成。下一步优先增加 Docker 隔离，再扩展评测
+规模和 Provider 重试/限流能力。

@@ -2,6 +2,7 @@
 
 from minicode_agent.security.policy import (
     ApprovalHandler,
+    ApprovalMode,
     PermissionDenied,
     PermissionLevel,
     PermissionPolicy,
@@ -10,6 +11,7 @@ from minicode_agent.security.workspace import Workspace, WorkspaceViolation, is_
 
 __all__ = [
     "ApprovalHandler",
+    "ApprovalMode",
     "PermissionDenied",
     "PermissionLevel",
     "PermissionPolicy",

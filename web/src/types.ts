@@ -9,10 +9,13 @@ export type Approval = {
   created_at: string;
 };
 
+export type ApprovalMode = "ask" | "auto" | "read_only";
+
 export type Run = {
   run_id: string;
   source: "cli" | "web";
   mode: "task" | "chat";
+  approval_mode: ApprovalMode;
   task: string;
   workspace: string;
   model_name: string;
@@ -57,4 +60,33 @@ export type CreateRunInput = {
   max_steps: number;
   max_context_tokens: number;
   max_total_tokens: number;
+  approval_mode: ApprovalMode;
+};
+
+export type FileChange = {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  additions: number | null;
+  deletions: number | null;
+  binary: boolean;
+  patch: string;
+};
+
+export type WorkspaceChanges = {
+  available: boolean;
+  reason: string | null;
+  files: FileChange[];
+  additions: number;
+  deletions: number;
+};
+
+export type TestResult = {
+  command: string;
+  status: "passed" | "failed" | "timed_out";
+  exit_code: number | null;
+  duration_ms: number | null;
+  passed: number | null;
+  failed: number | null;
+  skipped: number | null;
+  output_excerpt: string;
 };

@@ -74,6 +74,20 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/runs/{run_id}/changes")
+    async def workspace_changes(run_id: str) -> list[dict]:
+        try:
+            return manager.get_artifacts(run_id, "workspace_changes")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/runs/{run_id}/tests")
+    async def test_results(run_id: str) -> list[dict]:
+        try:
+            return manager.get_artifacts(run_id, "test_result")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/runs/{run_id}/events")
     async def stream_events(
         run_id: str,

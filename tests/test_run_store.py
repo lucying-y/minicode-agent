@@ -129,3 +129,38 @@ def test_recorder_batches_model_deltas_and_preserves_jsonl_trace(tmp_path: Path)
     assert events[0]["data"]["delta"] == "abcde"
     assert events[1]["data"]["delta"] == "fg"
     assert trace_path.read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_recorder_derives_structured_test_result(tmp_path: Path) -> None:
+    store = SqliteRunStore(tmp_path)
+    _create_run(store)
+    recorder = PersistentRunRecorder(JsonlTraceSink(tmp_path / "trace.jsonl"), store)
+
+    recorder.record(
+        TraceEvent(
+            run_id="run-1",
+            sequence=1,
+            timestamp="2026-08-24T00:00:00+00:00",
+            event_type="tool_result",
+            data={
+                "call": {
+                    "id": "tests-1",
+                    "name": "run_shell",
+                    "arguments": {"command": "uv run pytest -q"},
+                },
+                "result": {
+                    "content": "5 passed, 1 skipped in 0.25s",
+                    "is_error": False,
+                    "metadata": {
+                        "exit_code": 0,
+                        "timed_out": False,
+                        "duration_ms": 250,
+                    },
+                },
+            },
+        )
+    )
+
+    events = store.list_events("run-1")
+    assert [event["event_type"] for event in events] == ["tool_result", "test_result"]
+    assert events[1]["data"]["passed"] == 5

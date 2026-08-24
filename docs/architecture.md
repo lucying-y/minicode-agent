@@ -12,7 +12,7 @@ Agent loop -----> Model provider
 Tool registry --> Permission policy --> Workspace tools
    |
    v
-Context manager + JSONL trace store
+Context manager + JSONL trace store + run artifacts
 ```
 
 ## Boundaries
@@ -21,6 +21,7 @@ Context manager + JSONL trace store
 - `models`: translates messages and tool schemas to a model API.
 - `tools`: validates arguments and performs workspace-scoped operations.
 - `security`: decides whether a tool call is allowed, denied, or requires approval.
+- `artifacts`: derives task-scoped Git-visible changes and structured test results.
 - `persistence`: records append-only execution events and SQLite recovery checkpoints.
 - `cli`: connects configuration and user interaction to the runtime.
 

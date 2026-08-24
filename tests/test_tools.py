@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from minicode_agent.runtime import ToolCall
-from minicode_agent.security import PermissionLevel, PermissionPolicy
+from minicode_agent.security import ApprovalMode, PermissionLevel, PermissionPolicy
 from minicode_agent.tools import create_default_registry
 
 
@@ -168,6 +168,56 @@ async def test_registry_returns_structured_errors(tmp_path: Path) -> None:
     assert unknown.content == "unknown tool: missing"
     assert invalid.is_error
     assert invalid.metadata["tool"] == "read_file"
+
+
+async def test_approval_modes_auto_and_read_only(tmp_path: Path) -> None:
+    target = tmp_path / "mode.txt"
+    target.write_text("before\n", encoding="utf-8")
+    call = ToolCall(
+        id="edit-mode",
+        name="edit_file",
+        arguments={"path": "mode.txt", "old_text": "before", "new_text": "after"},
+    )
+
+    auto_registry = create_default_registry(
+        tmp_path,
+        PermissionPolicy(mode=ApprovalMode.AUTO),
+    )
+    auto_result = await auto_registry.execute(call)
+    assert not auto_result.is_error
+    assert target.read_text(encoding="utf-8") == "after\n"
+
+    read_only_registry = create_default_registry(
+        tmp_path,
+        PermissionPolicy(mode=ApprovalMode.READ_ONLY),
+    )
+    denied = await read_only_registry.execute(
+        ToolCall(
+            id="edit-read-only",
+            name="edit_file",
+            arguments={"path": "mode.txt", "old_text": "after", "new_text": "blocked"},
+        )
+    )
+    assert denied.is_error
+    assert "read-only" in denied.content
+    assert target.read_text(encoding="utf-8") == "after\n"
+
+
+async def test_auto_mode_still_blocks_high_risk_commands(tmp_path: Path) -> None:
+    registry = create_default_registry(
+        tmp_path,
+        PermissionPolicy(mode=ApprovalMode.AUTO),
+    )
+    blocked = await registry.execute(
+        ToolCall(
+            id="dangerous-auto",
+            name="run_shell",
+            arguments={"command": "git reset --hard"},
+        )
+    )
+
+    assert blocked.is_error
+    assert "blocked high-risk pattern" in blocked.content
 
 
 async def test_list_ignores_dependency_directories_and_edit_can_create(tmp_path: Path) -> None:

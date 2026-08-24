@@ -1,363 +1,49 @@
 import {
-  AlertTriangle,
-  Bot,
-  Check,
-  CheckCircle2,
-  ChevronRight,
-  CircleDot,
-  Clock3,
-  Code2,
-  Copy,
-  FileCode2,
-  FolderGit2,
-  ListTree,
-  Menu,
-  MessageSquareText,
-  Play,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Settings2,
-  ShieldAlert,
-  Square,
-  TerminalSquare,
-  Wrench,
-  X,
+  AlertTriangle, Bot, Check, Code2, Copy, FileCode2, Files, FlaskConical,
+  FolderGit2, ListTree, Menu, MessageSquareText, Plus, RefreshCw, RotateCcw,
+  Settings2, ShieldAlert, Square, TerminalSquare, X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { ConsoleEvent, CreateRunInput, Health, Run } from "./types";
+import { NewRunDialog } from "./NewRunDialog";
+import { artifactCounts, ChangesView, TestsView } from "./RunArtifacts";
+import { Timeline } from "./Timeline";
+import type { ConsoleEvent, Health, Run } from "./types";
+import {
+  approvalModeLabel, cancellableStatuses, formatNumber, formatTime,
+  resumableStatuses, statusLabel, terminalStatuses,
+} from "./ui";
 
-const terminalStatuses = new Set([
-  "completed",
-  "step_limit",
-  "token_limit",
-  "tool_error",
-  "failed",
-  "cancelled",
-]);
-
-const resumableStatuses = new Set(["step_limit", "token_limit", "tool_error", "failed", "cancelled"]);
-
-const cancellableStatuses = new Set(["queued", "running", "waiting_approval", "cancelling"]);
-
-const statusLabel: Record<string, string> = {
-  idle: "等待输入",
-  queued: "排队中",
-  running: "运行中",
-  waiting_approval: "等待审批",
-  cancelling: "取消中",
-  completed: "已完成",
-  step_limit: "达到步数上限",
-  token_limit: "达到 Token 上限",
-  tool_error: "工具错误",
-  failed: "运行失败",
-  cancelled: "已取消",
-};
-
-function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(value));
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("zh-CN").format(value);
-}
+type RunView = "timeline" | "changes" | "tests";
 
 function SourceBadge({ source }: { source: Run["source"] }) {
   return <span className={`source-badge source-${source}`}>{source.toUpperCase()}</span>;
 }
 
-function eventPresentation(event: ConsoleEvent) {
-  const toolCall = event.data.call as { name?: string } | undefined;
-  const toolCalls = event.data.tool_calls as Array<{ name?: string }> | undefined;
-  switch (event.event_type) {
-    case "run_queued":
-      return { icon: Clock3, title: "任务已加入队列", tone: "neutral" };
-    case "run_status":
-      return { icon: CircleDot, title: `状态：${statusLabel[String(event.data.status)] || event.data.status}`, tone: "neutral" };
-    case "run_cancel_requested":
-      return { icon: Square, title: "正在取消任务", tone: "warning" };
-    case "run_cancelled":
-      return { icon: Square, title: "任务已取消", tone: "danger" };
-    case "run_started":
-      return { icon: Play, title: "Agent 开始执行", tone: "positive" };
-    case "session_started":
-      return { icon: TerminalSquare, title: "CLI 会话已启动", tone: "positive" };
-    case "user_message":
-      return { icon: MessageSquareText, title: "用户消息", tone: "model" };
-    case "session_waiting_input":
-      return { icon: Clock3, title: "等待下一条输入", tone: "neutral" };
-    case "session_limit_reached":
-      return { icon: AlertTriangle, title: "会话达到 Token 上限", tone: "warning" };
-    case "session_finished":
-      return { icon: CheckCircle2, title: "CLI 会话已退出", tone: "positive" };
-    case "run_resumed":
-      return { icon: RotateCcw, title: "从 Checkpoint 恢复", tone: "positive" };
-    case "model_response":
-      return {
-        icon: Bot,
-        title: toolCalls?.length ? `模型请求 ${toolCalls.length} 个工具` : "模型返回最终结果",
-        tone: "model",
-      };
-    case "approval_required":
-      return { icon: ShieldAlert, title: `等待审批：${toolCall?.name || "工具"}`, tone: "warning" };
-    case "approval_resolved":
-      return { icon: event.data.approved ? Check : X, title: event.data.approved ? "操作已批准" : "操作已拒绝", tone: event.data.approved ? "positive" : "danger" };
-    case "tool_result":
-      return { icon: Wrench, title: `工具完成：${toolCall?.name || "未知工具"}`, tone: "tool" };
-    case "run_finished":
-      return { icon: CheckCircle2, title: `运行结束：${statusLabel[String(event.data.status)] || event.data.status}`, tone: event.data.status === "completed" ? "positive" : "danger" };
-    case "model_error":
-    case "web_error":
-      return { icon: AlertTriangle, title: "运行发生错误", tone: "danger" };
-    default:
-      return { icon: Code2, title: event.event_type, tone: "neutral" };
-  }
-}
-
-function pendingModelOutput(events: ConsoleEvent[]) {
-  const outputs = new Map<number, { content: string; timestamp: string; eventId: number }>();
-  for (const event of events) {
-    const step = Number(event.data.step);
-    if (!Number.isFinite(step)) continue;
-    if (event.event_type === "model_output_delta" && typeof event.data.delta === "string") {
-      const current = outputs.get(step);
-      outputs.set(step, {
-        content: `${current?.content || ""}${event.data.delta}`,
-        timestamp: event.timestamp,
-        eventId: event.id,
-      });
-    } else if (event.event_type === "model_response") {
-      outputs.delete(step);
-    }
-  }
-  const latest = [...outputs.entries()].sort((left, right) => right[1].eventId - left[1].eventId)[0];
-  return latest ? { step: latest[0], ...latest[1] } : null;
-}
-
-type TimelineItem =
-  | { kind: "event"; event: ConsoleEvent }
-  | { kind: "tool-group"; events: ConsoleEvent[] };
-
-const toolFollowUpEvents = new Set([
-  "approval_required",
-  "approval_resolved",
-  "tool_result",
-]);
-
-function groupTimelineEvents(events: ConsoleEvent[]): TimelineItem[] {
-  const visibleEvents = events.filter((event) => event.event_type !== "model_output_delta");
-  const items: TimelineItem[] = [];
-  for (let index = 0; index < visibleEvents.length;) {
-    const event = visibleEvents[index];
-    const toolCalls = event.data.tool_calls;
-    if (event.event_type !== "model_response" || !Array.isArray(toolCalls) || !toolCalls.length) {
-      items.push({ kind: "event", event });
-      index += 1;
-      continue;
-    }
-
-    const groupedEvents = [event];
-    index += 1;
-    while (index < visibleEvents.length && toolFollowUpEvents.has(visibleEvents[index].event_type)) {
-      groupedEvents.push(visibleEvents[index]);
-      index += 1;
-    }
-    items.push({ kind: "tool-group", events: groupedEvents });
-  }
-  return items;
-}
-
-function NewRunDialog({
-  open,
-  defaultWorkspace,
-  onClose,
-  onCreated,
-}: {
-  open: boolean;
-  defaultWorkspace: string;
-  onClose: () => void;
-  onCreated: (run: Run) => void;
-}) {
-  const [form, setForm] = useState<CreateRunInput>({
-    task: "",
-    workspace: defaultWorkspace,
-    max_steps: 12,
-    max_context_tokens: 32000,
-    max_total_tokens: 100000,
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (defaultWorkspace && !form.workspace) {
-      setForm((current) => ({ ...current, workspace: defaultWorkspace }));
-    }
-  }, [defaultWorkspace, form.workspace]);
-
-  if (!open) return null;
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setSubmitting(true);
-    setError("");
-    try {
-      const run = await api.createRun(form);
-      setForm((current) => ({ ...current, task: "" }));
-      onCreated(run);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "任务创建失败");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <form className="new-run-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <span className="section-kicker">NEW RUN</span>
-            <h2>创建代码任务</h2>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} title="关闭">
-            <X size={18} />
-          </button>
-        </div>
-
-        <label className="field wide-field">
-          <span>任务</span>
-          <textarea
-            autoFocus
-            rows={6}
-            value={form.task}
-            onChange={(event) => setForm({ ...form, task: event.target.value })}
-            placeholder="例如：检查失败测试，完成最小范围修复并验证"
-            required
-          />
-        </label>
-
-        <label className="field wide-field">
-          <span>工作区绝对路径</span>
-          <div className="input-with-icon">
-            <FolderGit2 size={16} />
-            <input
-              value={form.workspace}
-              onChange={(event) => setForm({ ...form, workspace: event.target.value })}
-              required
-            />
-          </div>
-        </label>
-
-        <div className="settings-grid">
-          <label className="field">
-            <span>最大步数</span>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              step={1}
-              value={form.max_steps}
-              onChange={(event) => setForm({ ...form, max_steps: Number(event.target.value) })}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>上下文 Token</span>
-            <input
-              type="number"
-              min={128}
-              max={1000000}
-              step={1}
-              value={form.max_context_tokens}
-              onChange={(event) => setForm({ ...form, max_context_tokens: Number(event.target.value) })}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>总 Token</span>
-            <input
-              type="number"
-              min={1}
-              max={10000000}
-              step={1}
-              value={form.max_total_tokens}
-              onChange={(event) => setForm({ ...form, max_total_tokens: Number(event.target.value) })}
-              required
-            />
-          </label>
-        </div>
-
-        {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}
-
-        <div className="modal-actions">
-          <button className="button secondary" type="button" onClick={onClose}>取消</button>
-          <button className="button primary" type="submit" disabled={submitting || !form.task.trim()}>
-            {submitting ? <RefreshCw className="spin" size={17} /> : <Play size={17} />}
-            启动任务
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
 function RunSidebar({
-  runs,
-  selectedId,
-  open,
-  onSelect,
-  onClose,
+  runs, selectedId, open, onSelect, onClose,
 }: {
-  runs: Run[];
-  selectedId: string | null;
-  open: boolean;
-  onSelect: (runId: string) => void;
-  onClose: () => void;
+  runs: Run[]; selectedId: string | null; open: boolean;
+  onSelect: (runId: string) => void; onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
   const filtered = runs.filter((run) =>
     `${run.task} ${run.workspace} ${run.source} ${run.model_name}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
+      .toLowerCase().includes(query.toLowerCase()),
   );
-
   return (
     <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
       <div className="sidebar-heading">
-        <span>运行记录</span>
-        <span className="count-badge">{runs.length}</span>
-        <button className="icon-button mobile-only" onClick={onClose} title="关闭运行列表">
-          <X size={18} />
-        </button>
+        <span>运行记录</span><span className="count-badge">{runs.length}</span>
+        <button className="icon-button mobile-only" onClick={onClose} title="关闭运行列表"><X size={18} /></button>
       </div>
-      <div className="search-box">
-        <Search size={15} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索任务" />
-      </div>
+      <div className="search-box"><ListTree size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索任务" /></div>
       <div className="run-list">
         {filtered.map((run) => (
-          <button
-            key={run.run_id}
-            className={`run-row ${selectedId === run.run_id ? "selected" : ""}`}
-            onClick={() => { onSelect(run.run_id); onClose(); }}
-          >
-            <div className="run-row-top">
-              <span className={`status-dot status-${run.status}`} />
-              <span className="run-title">{run.task}</span>
-              <ChevronRight size={15} />
-            </div>
+          <button key={run.run_id} className={`run-row ${selectedId === run.run_id ? "selected" : ""}`} onClick={() => { onSelect(run.run_id); onClose(); }}>
+            <div className="run-row-top"><span className={`status-dot status-${run.status}`} /><span className="run-title">{run.task}</span><span /></div>
             <div className="run-row-meta">
-              <span>
-                <SourceBadge source={run.source} />
-                {run.mode === "chat" && <span className="source-badge mode-chat">CHAT</span>}
-                {statusLabel[run.status] || run.status}
-              </span>
+              <span><SourceBadge source={run.source} />{run.mode === "chat" && <span className="source-badge mode-chat">CHAT</span>}{statusLabel[run.status] || run.status}</span>
               <span>{formatTime(run.updated_at)}</span>
             </div>
           </button>
@@ -368,166 +54,20 @@ function RunSidebar({
   );
 }
 
-function TimelineEvent({
-  event,
-  selected,
-  onSelect,
-}: {
-  event: ConsoleEvent;
-  selected: boolean;
-  onSelect: (event: ConsoleEvent) => void;
-}) {
-  const presentation = eventPresentation(event);
-  const Icon = presentation.icon;
-  const content = typeof event.data.content === "string" ? event.data.content : "";
-  const result = event.data.result as { content?: string; is_error?: boolean } | undefined;
-  return (
-    <button
-      className={`timeline-entry tone-${presentation.tone} ${selected ? "selected" : ""}`}
-      onClick={() => onSelect(event)}
-    >
-      <span className="timeline-icon"><Icon size={16} /></span>
-      <span className="timeline-body">
-        <span className="timeline-heading">
-          <strong>{presentation.title}</strong>
-          <time>{formatTime(event.timestamp)}</time>
-        </span>
-        {content && <span className="timeline-preview">{content}</span>}
-        {result?.content && <span className={`timeline-preview ${result.is_error ? "error-text" : ""}`}>{result.content}</span>}
-      </span>
-    </button>
-  );
-}
-
-function ToolEventGroup({
-  events,
-  selectedEventId,
-  onSelect,
-}: {
-  events: ConsoleEvent[];
-  selectedEventId: number | null;
-  onSelect: (event: ConsoleEvent) => void;
-}) {
-  const modelEvent = events[0];
-  const toolCalls = modelEvent.data.tool_calls as Array<{ name?: string }>;
-  const resultEvents = events.filter((event) => event.event_type === "tool_result");
-  const hasError = resultEvents.some((event) => {
-    const result = event.data.result as { is_error?: boolean } | undefined;
-    return result?.is_error;
-  });
-  const approvalCount = events.filter((event) => event.event_type === "approval_required").length;
-  const resolvedCount = events.filter((event) => event.event_type === "approval_resolved").length;
-  const status = approvalCount > resolvedCount
-    ? "等待审批"
-    : hasError
-      ? "包含错误"
-      : resultEvents.length === toolCalls.length
-        ? "已完成"
-        : `完成 ${resultEvents.length}/${toolCalls.length}`;
-  const step = Number(modelEvent.data.step);
-  return (
-    <details className="tool-event-group">
-      <summary className="tool-group-summary">
-        <span className="timeline-icon"><Wrench size={16} /></span>
-        <span className="timeline-body">
-          <span className="timeline-heading">
-            <strong>第 {step} 步 · {toolCalls.length} 个工具调用</strong>
-            <time>{formatTime(modelEvent.timestamp)}</time>
-          </span>
-          <span className={`tool-group-status ${hasError ? "error-text" : ""}`}>
-            {status}<ChevronRight className="tool-group-chevron" size={14} />
-          </span>
-        </span>
-      </summary>
-      <div className="tool-group-events">
-        {events.map((event) => (
-          <TimelineEvent
-            key={event.id}
-            event={event}
-            selected={selectedEventId === event.id}
-            onSelect={onSelect}
-          />
-        ))}
-      </div>
-    </details>
-  );
-}
-
-function Timeline({
-  events,
-  running,
-  selectedEventId,
-  onSelect,
-}: {
-  events: ConsoleEvent[];
-  running: boolean;
-  selectedEventId: number | null;
-  onSelect: (event: ConsoleEvent) => void;
-}) {
-  const timelineItems = groupTimelineEvents(events);
-  const liveOutput = pendingModelOutput(events);
-  if (!timelineItems.length && !liveOutput) {
-    return <div className="empty-timeline"><Clock3 size={20} />等待第一个运行事件</div>;
-  }
-  return (
-    <div className="timeline">
-      {timelineItems.map((item) => item.kind === "event" ? (
-        <TimelineEvent
-          key={item.event.id}
-          event={item.event}
-          selected={selectedEventId === item.event.id}
-          onSelect={onSelect}
-        />
-      ) : (
-        <ToolEventGroup
-          key={`tool-group-${item.events[0].id}`}
-          events={item.events}
-          selectedEventId={selectedEventId}
-          onSelect={onSelect}
-        />
-      ))}
-      {liveOutput && (
-        <div className={`timeline-entry streaming-entry tone-model ${running ? "active" : ""}`} aria-live="polite">
-          <span className="timeline-icon"><Bot size={16} /></span>
-          <span className="timeline-body">
-            <span className="timeline-heading">
-              <strong>{running ? `模型正在生成 · 第 ${liveOutput.step} 步` : `模型输出中断 · 第 ${liveOutput.step} 步`}</strong>
-              <time>{formatTime(liveOutput.timestamp)}</time>
-            </span>
-            <span className="streaming-output">{liveOutput.content}{running && <span className="streaming-cursor" />}</span>
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function Inspector({
-  run,
-  event,
-  busyApproval,
-  onApproval,
+  run, event, busyApproval, onApproval,
 }: {
-  run: Run | null;
-  event: ConsoleEvent | null;
-  busyApproval: boolean;
+  run: Run | null; event: ConsoleEvent | null; busyApproval: boolean;
   onApproval: (approved: boolean) => void;
 }) {
   const [copiedEventId, setCopiedEventId] = useState<number | null>(null);
-
-  useEffect(() => {
-    setCopiedEventId(null);
-  }, [event?.id]);
-
+  useEffect(() => setCopiedEventId(null), [event?.id]);
   async function copyEventData() {
     if (!event) return;
     await navigator.clipboard.writeText(JSON.stringify(event.data, null, 2));
     setCopiedEventId(event.id);
   }
-
-  if (!run) {
-    return <aside className="inspector"><div className="inspector-empty"><ListTree size={19} />选择一次运行</div></aside>;
-  }
+  if (!run) return <aside className="inspector"><div className="inspector-empty"><ListTree size={19} />选择一次运行</div></aside>;
   const approval = run.pending_approval;
   return (
     <aside className="inspector">
@@ -542,19 +82,18 @@ function Inspector({
           </div>
         </section>
       )}
-
       {run.source === "cli" && run.status === "waiting_approval" && (
         <section className="approval-panel readonly-approval">
           <div className="approval-title"><TerminalSquare size={18} /><strong>等待终端审批</strong></div>
           <p>此任务由 CLI 发起，请回到原终端批准或拒绝操作。</p>
         </section>
       )}
-
       <section className="inspector-section">
         <div className="inspector-section-title"><Settings2 size={15} />运行配置</div>
         <dl className="definition-list">
           <div><dt>来源</dt><dd><SourceBadge source={run.source} /></dd></div>
-          <div><dt>模式</dt><dd>{run.mode === "chat" ? "交互会话" : "单次任务"}</dd></div>
+          <div><dt>会话</dt><dd>{run.mode === "chat" ? "交互会话" : "单次任务"}</dd></div>
+          <div><dt>审批</dt><dd>{approvalModeLabel[run.approval_mode]}</dd></div>
           <div><dt>模型</dt><dd title={run.model_name}>{run.model_name}</dd></div>
           <div><dt>工作区</dt><dd title={run.workspace}>{run.workspace}</dd></div>
           <div><dt>最大步数</dt><dd>{run.max_steps}</dd></div>
@@ -563,26 +102,12 @@ function Inspector({
           <div><dt>Run ID</dt><dd className="mono">{run.run_id}</dd></div>
         </dl>
       </section>
-
       <section className="inspector-section event-inspector">
         <div className="inspector-section-title">
           <Code2 size={15} />事件详情
-          {event && (
-            <button
-              className="icon-button event-copy-button"
-              onClick={() => void copyEventData()}
-              title={copiedEventId === event.id ? "已复制" : "复制事件 JSON"}
-            >
-              {copiedEventId === event.id ? <Check size={14} /> : <Copy size={14} />}
-            </button>
-          )}
+          {event && <button className="icon-button event-copy-button" onClick={() => void copyEventData()} title={copiedEventId === event.id ? "已复制" : "复制事件 JSON"}>{copiedEventId === event.id ? <Check size={14} /> : <Copy size={14} />}</button>}
         </div>
-        {event ? (
-          <>
-            <div className="event-name">{event.event_type}<span>#{event.id}</span></div>
-            <pre>{JSON.stringify(event.data, null, 2)}</pre>
-          </>
-        ) : <div className="inspector-empty compact">选择时间线事件</div>}
+        {event ? <><div className="event-name">{event.event_type}<span>#{event.id}</span></div><pre>{JSON.stringify(event.data, null, 2)}</pre></> : <div className="inspector-empty compact">选择时间线事件</div>}
       </section>
     </aside>
   );
@@ -594,6 +119,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [events, setEvents] = useState<ConsoleEvent[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<ConsoleEvent | null>(null);
+  const [activeView, setActiveView] = useState<RunView>("timeline");
   const [newRunOpen, setNewRunOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -601,11 +127,8 @@ export default function App() {
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
 
-  const selectedRun = useMemo(
-    () => runs.find((run) => run.run_id === selectedId) || null,
-    [runs, selectedId],
-  );
-
+  const selectedRun = useMemo(() => runs.find((run) => run.run_id === selectedId) || null, [runs, selectedId]);
+  const counts = useMemo(() => artifactCounts(events), [events]);
   const refreshRuns = useCallback(async () => {
     const nextRuns = await api.listRuns();
     setRuns(nextRuns);
@@ -615,9 +138,7 @@ export default function App() {
   useEffect(() => {
     Promise.all([api.health(), api.listRuns()])
       .then(([nextHealth, nextRuns]) => {
-        setHealth(nextHealth);
-        setRuns(nextRuns);
-        setSelectedId(nextRuns[0]?.run_id || null);
+        setHealth(nextHealth); setRuns(nextRuns); setSelectedId(nextRuns[0]?.run_id || null);
         setNewRunOpen(nextRuns.length === 0);
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Console 初始化失败"))
@@ -625,30 +146,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      void refreshRuns().catch((reason) => {
-        setError(reason instanceof Error ? reason.message : "运行列表刷新失败");
-      });
-    }, 2000);
+    const interval = window.setInterval(() => void refreshRuns().catch((reason) => setError(reason instanceof Error ? reason.message : "运行列表刷新失败")), 2000);
     return () => window.clearInterval(interval);
   }, [refreshRuns]);
 
   useEffect(() => {
-    if (!selectedId) {
-      setEvents([]);
-      setSelectedEvent(null);
-      return;
-    }
+    if (!selectedId) { setEvents([]); setSelectedEvent(null); return; }
     let disposed = false;
-    setSelectedEvent(null);
-    setEvents([]);
+    setActiveView("timeline"); setSelectedEvent(null); setEvents([]);
     api.getEvents(selectedId).then((history) => {
-      if (!disposed) {
-        setEvents((current) => {
-          const merged = new Map([...history, ...current].map((event) => [event.id, event]));
-          return [...merged.values()].sort((left, right) => left.id - right.id);
-        });
-      }
+      if (!disposed) setEvents((current) => {
+        const merged = new Map([...history, ...current].map((item) => [item.id, item]));
+        return [...merged.values()].sort((left, right) => left.id - right.id);
+      });
     }).catch((reason) => setError(reason instanceof Error ? reason.message : "事件加载失败"));
 
     const source = new EventSource(`/api/runs/${selectedId}/events`);
@@ -656,39 +166,25 @@ export default function App() {
       const event = JSON.parse(message.data) as ConsoleEvent;
       setEvents((current) => current.some((item) => item.id === event.id) ? current : [...current, event]);
       if (event.event_type === "model_output_delta") {
-        setRuns((current) => current.map((run) => run.run_id === selectedId ? {
-          ...run,
-          event_count: Math.max(run.event_count, event.id),
-          updated_at: event.timestamp,
-        } : run));
+        setRuns((current) => current.map((run) => run.run_id === selectedId ? { ...run, event_count: Math.max(run.event_count, event.id), updated_at: event.timestamp } : run));
         return;
       }
       void Promise.all([api.getRun(selectedId), api.listRuns()]).then(([detail, nextRuns]) => {
-        if (disposed) return;
-        setRuns(nextRuns.map((run) => run.run_id === detail.run_id ? detail : run));
+        if (!disposed) setRuns(nextRuns.map((run) => run.run_id === detail.run_id ? detail : run));
       });
     };
-    source.onerror = () => {
-      if (!disposed) void refreshRuns();
-    };
-    return () => {
-      disposed = true;
-      source.close();
-    };
+    source.onerror = () => { if (!disposed) void refreshRuns(); };
+    return () => { disposed = true; source.close(); };
   }, [selectedId, refreshRuns]);
 
   async function resolveApproval(approved: boolean) {
     if (!selectedRun?.pending_approval) return;
-    setApprovalBusy(true);
-    setError("");
+    setApprovalBusy(true); setError("");
     try {
       await api.resolveApproval(selectedRun.run_id, selectedRun.pending_approval.approval_id, approved);
       await refreshRuns();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "审批提交失败");
-    } finally {
-      setApprovalBusy(false);
-    }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "审批提交失败"); }
+    finally { setApprovalBusy(false); }
   }
 
   async function resume() {
@@ -697,121 +193,68 @@ export default function App() {
     try {
       const resumed = await api.resumeRun(selectedRun);
       setRuns((current) => current.map((run) => run.run_id === resumed.run_id ? resumed : run));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "恢复失败");
-    }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "恢复失败"); }
   }
 
   async function cancelRun() {
     if (!selectedRun || !window.confirm("确认取消当前任务？")) return;
-    setCancelBusy(true);
-    setError("");
+    setCancelBusy(true); setError("");
     try {
       const cancelled = await api.cancelRun(selectedRun.run_id);
-      setRuns((current) => current.map((run) => (
-        run.run_id === cancelled.run_id ? cancelled : run
-      )));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "取消失败");
-    } finally {
-      setCancelBusy(false);
-    }
+      setRuns((current) => current.map((run) => run.run_id === cancelled.run_id ? cancelled : run));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "取消失败"); }
+    finally { setCancelBusy(false); }
   }
 
   function handleCreated(run: Run) {
-    setRuns((current) => [run, ...current]);
-    setSelectedId(run.run_id);
-    setNewRunOpen(false);
+    setRuns((current) => [run, ...current]); setSelectedId(run.run_id); setNewRunOpen(false);
   }
 
   return (
     <div className={`app-shell ${selectedRun?.pending_approval ? "has-pending-approval" : ""}`}>
       <header className="topbar">
-        <div className="brand-group">
-          <button className="icon-button mobile-only" onClick={() => setSidebarOpen(true)} title="打开运行列表"><Menu size={19} /></button>
-          <div className="brand-mark"><Bot size={19} /></div>
-          <div className="brand-name">MiniCode <span>Console</span></div>
-        </div>
+        <div className="brand-group"><button className="icon-button mobile-only" onClick={() => setSidebarOpen(true)} title="打开运行列表"><Menu size={19} /></button><div className="brand-mark"><Bot size={19} /></div><div className="brand-name">MiniCode <span>Console</span></div></div>
         <div className="topbar-actions">
-          <div
-            className={`connection-state ${health ? "online" : "offline"}`}
-            title={health ? `${health.operating_system} · ${health.shell_name}${health.shell_version ? ` ${health.shell_version}` : ""}` : undefined}
-          >
-            <span />{health ? `${health.model} · ${health.shell_name}` : (loading ? "连接中" : "未连接")}
-          </div>
+          <div className={`connection-state ${health ? "online" : "offline"}`} title={health ? `${health.operating_system} · ${health.shell_name}${health.shell_version ? ` ${health.shell_version}` : ""}` : undefined}><span />{health ? `${health.model} · ${health.shell_name}` : (loading ? "连接中" : "未连接")}</div>
           <button className="icon-button" onClick={() => void refreshRuns()} title="刷新运行"><RefreshCw size={17} /></button>
           <button className="button primary" onClick={() => setNewRunOpen(true)}><Plus size={17} />新任务</button>
         </div>
       </header>
-
       {error && <div className="global-error"><AlertTriangle size={16} /><span>{error}</span><button onClick={() => setError("")} title="关闭"><X size={15} /></button></div>}
 
       <div className="workspace-shell">
         <RunSidebar runs={runs} selectedId={selectedId} open={sidebarOpen} onSelect={setSelectedId} onClose={() => setSidebarOpen(false)} />
-
         <main className="run-workspace">
-          {selectedRun ? (
-            <>
-              <div className="run-header">
-                <div className="run-heading">
-                  <div className="run-status-line">
-                    <span className={`status-chip status-${selectedRun.status}`}><span />{statusLabel[selectedRun.status] || selectedRun.status}</span>
-                    <SourceBadge source={selectedRun.source} />
-                    {selectedRun.mode === "chat" && <span className="source-badge mode-chat">CHAT</span>}
-                    <span className="workspace-path"><FolderGit2 size={14} />{selectedRun.workspace}</span>
-                  </div>
-                  <h1>{selectedRun.task}</h1>
-                </div>
-                <div className="run-actions">
-                  {selectedRun.source === "web" && cancellableStatuses.has(selectedRun.status) && (
-                    <button
-                      className="button danger"
-                      disabled={cancelBusy || selectedRun.status === "cancelling"}
-                      onClick={() => void cancelRun()}
-                    >
-                      <Square size={15} />{selectedRun.status === "cancelling" ? "取消中" : "取消任务"}
-                    </button>
-                  )}
-                  {selectedRun.source === "web" && resumableStatuses.has(selectedRun.status) && (
-                    <button className="button secondary" onClick={() => void resume()}><RotateCcw size={16} />恢复运行</button>
-                  )}
-                </div>
+          {selectedRun ? <>
+            <div className="run-header">
+              <div className="run-heading">
+                <div className="run-status-line"><span className={`status-chip status-${selectedRun.status}`}><span />{statusLabel[selectedRun.status] || selectedRun.status}</span><SourceBadge source={selectedRun.source} />{selectedRun.mode === "chat" && <span className="source-badge mode-chat">CHAT</span>}<span className="workspace-path"><FolderGit2 size={14} />{selectedRun.workspace}</span></div>
+                <h1>{selectedRun.task}</h1>
               </div>
-
-              <div className="metrics-strip">
-                <div><span>状态</span><strong>{statusLabel[selectedRun.status] || selectedRun.status}</strong></div>
-                <div>
-                  <span>{selectedRun.mode === "chat" ? "累计步数" : "模型步数"}</span>
-                  <strong>
-                    {selectedRun.steps}
-                    {selectedRun.mode === "task" && <small> / {selectedRun.max_steps}</small>}
-                  </strong>
-                </div>
-                <div><span>输入 Token</span><strong>{formatNumber(selectedRun.input_tokens)}</strong></div>
-                <div><span>输出 Token</span><strong>{formatNumber(selectedRun.output_tokens)}</strong></div>
-                <div><span>事件</span><strong>{selectedRun.event_count}</strong></div>
+              <div className="run-actions">
+                {selectedRun.source === "web" && cancellableStatuses.has(selectedRun.status) && <button className="button danger" disabled={cancelBusy || selectedRun.status === "cancelling"} onClick={() => void cancelRun()}><Square size={15} />{selectedRun.status === "cancelling" ? "取消中" : "取消任务"}</button>}
+                {selectedRun.source === "web" && resumableStatuses.has(selectedRun.status) && <button className="button secondary" onClick={() => void resume()}><RotateCcw size={16} />恢复运行</button>}
               </div>
-
-              <div className="timeline-header"><MessageSquareText size={16} /><span>执行时间线</span>{!terminalStatuses.has(selectedRun.status) && <span className="live-indicator">LIVE</span>}</div>
-              <Timeline
-                events={events}
-                running={!terminalStatuses.has(selectedRun.status)}
-                selectedEventId={selectedEvent?.id || null}
-                onSelect={setSelectedEvent}
-              />
-            </>
-          ) : (
-            <div className="empty-workspace">
-              <div className="empty-workspace-icon"><FileCode2 size={24} /></div>
-              <h1>暂无运行任务</h1>
-              <button className="button primary" onClick={() => setNewRunOpen(true)}><Plus size={17} />创建任务</button>
             </div>
-          )}
+            <div className="metrics-strip">
+              <div><span>状态</span><strong>{statusLabel[selectedRun.status] || selectedRun.status}</strong></div>
+              <div><span>{selectedRun.mode === "chat" ? "累计步数" : "模型步数"}</span><strong>{selectedRun.steps}{selectedRun.mode === "task" && <small> / {selectedRun.max_steps}</small>}</strong></div>
+              <div><span>输入 Token</span><strong>{formatNumber(selectedRun.input_tokens)}</strong></div>
+              <div><span>输出 Token</span><strong>{formatNumber(selectedRun.output_tokens)}</strong></div>
+              <div><span>事件</span><strong>{selectedRun.event_count}</strong></div>
+            </div>
+            <div className="run-view-tabs" role="tablist" aria-label="运行详情">
+              <button role="tab" aria-selected={activeView === "timeline"} className={activeView === "timeline" ? "active" : ""} onClick={() => setActiveView("timeline")}><MessageSquareText size={15} />时间线{!terminalStatuses.has(selectedRun.status) && <span className="live-indicator">LIVE</span>}</button>
+              <button role="tab" aria-selected={activeView === "changes"} className={activeView === "changes" ? "active" : ""} onClick={() => setActiveView("changes")}><Files size={15} />变更<span className="tab-count">{counts.changes}</span></button>
+              <button role="tab" aria-selected={activeView === "tests"} className={activeView === "tests" ? "active" : ""} onClick={() => setActiveView("tests")}><FlaskConical size={15} />测试<span className="tab-count">{counts.tests}</span></button>
+            </div>
+            {activeView === "timeline" && <Timeline events={events} running={!terminalStatuses.has(selectedRun.status)} selectedEventId={selectedEvent?.id || null} onSelect={setSelectedEvent} />}
+            {activeView === "changes" && <ChangesView events={events} />}
+            {activeView === "tests" && <TestsView events={events} />}
+          </> : <div className="empty-workspace"><div className="empty-workspace-icon"><FileCode2 size={24} /></div><h1>暂无运行任务</h1><button className="button primary" onClick={() => setNewRunOpen(true)}><Plus size={17} />创建任务</button></div>}
         </main>
-
         <Inspector run={selectedRun} event={selectedEvent} busyApproval={approvalBusy} onApproval={(approved) => void resolveApproval(approved)} />
       </div>
-
       <NewRunDialog open={newRunOpen} defaultWorkspace={health?.default_workspace || ""} onClose={() => setNewRunOpen(false)} onCreated={handleCreated} />
       {sidebarOpen && <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} />}
     </div>

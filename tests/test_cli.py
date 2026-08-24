@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from minicode_agent.cli import (
-    AlwaysApprover,
     ConsoleApprover,
     _default_web_dist,
     _normalize_chat_input,
@@ -28,6 +27,14 @@ def test_parser_accepts_run_configuration() -> None:
     assert args.workspace == Path("/tmp/project")
     assert args.max_steps == 5
     assert args.max_total_tokens == 100_000
+    assert args.approval_mode == "ask"
+
+    auto_args = build_parser().parse_args(["run", "fix", "--approval-mode", "auto"])
+    assert auto_args.approval_mode == "auto"
+    assert not auto_args.yes
+
+    yes_args = build_parser().parse_args(["run", "fix", "--yes"])
+    assert yes_args.yes
 
     chat_args = build_parser().parse_args(["chat", "--workspace", "/tmp/chat"])
     assert chat_args.command == "chat"
@@ -209,12 +216,11 @@ async def test_help_command_with_surrogate_prefix_does_not_start_model(
     assert fake_model.requests == []
 
 
-async def test_console_and_always_approvers(monkeypatch) -> None:
+async def test_console_approver(monkeypatch) -> None:
     call = ToolCall(id="1", name="edit_file", arguments={"path": "app.py"})
     monkeypatch.setattr("builtins.input", lambda prompt: "yes")
 
     assert await ConsoleApprover().approve(call, PermissionLevel.WRITE)
-    assert await AlwaysApprover().approve(call, PermissionLevel.EXECUTE)
 
 
 async def test_resume_reports_missing_checkpoint(tmp_path: Path, monkeypatch, capsys) -> None:

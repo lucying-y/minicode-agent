@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
+from minicode_agent.artifacts import WorkspaceChangeTracker
 from minicode_agent.evaluation import EvaluationRunner, load_task_suite
 from minicode_agent.execution import (
     ShellBackend,
@@ -32,7 +33,13 @@ from minicode_agent.runtime import (
     RunStatus,
     ToolCall,
 )
-from minicode_agent.security import ApprovalHandler, PermissionLevel, PermissionPolicy, Workspace
+from minicode_agent.security import (
+    ApprovalHandler,
+    ApprovalMode,
+    PermissionLevel,
+    PermissionPolicy,
+    Workspace,
+)
 from minicode_agent.tools import create_default_registry
 
 
@@ -47,14 +54,6 @@ class ConsoleApprover:
         except EOFError:
             return False
         return answer.strip().lower() in {"y", "yes"}
-
-
-class AlwaysApprover:
-    """Approve non-blocked operations for explicit `--yes` runs."""
-
-    async def approve(self, call: ToolCall, permission: PermissionLevel) -> bool:
-        del call, permission
-        return True
 
 
 class RecordingApprover:
@@ -155,10 +154,35 @@ def _add_runtime_options(command: argparse.ArgumentParser) -> None:
     command.add_argument("--max-steps", type=int, default=12)
     command.add_argument("--max-context-tokens", type=int, default=32_000)
     command.add_argument("--max-total-tokens", type=int, default=100_000)
-    command.add_argument(
+    approval = command.add_mutually_exclusive_group()
+    approval.add_argument(
+        "--approval-mode",
+        choices=[mode.value for mode in ApprovalMode],
+        default=ApprovalMode.ASK.value,
+        help="ask before changes, auto-approve allowed changes, or enforce read-only tools",
+    )
+    approval.add_argument(
         "--yes",
         action="store_true",
-        help="approve writes and commands without prompting; blocked commands remain denied",
+        help="alias for --approval-mode auto; blocked commands remain denied",
+    )
+
+
+def _approval_mode(args: argparse.Namespace) -> ApprovalMode:
+    return ApprovalMode.AUTO if args.yes else ApprovalMode(args.approval_mode)
+
+
+def _record_workspace_changes(
+    store: SqliteRunStore,
+    run_id: str,
+    tracker: WorkspaceChangeTracker,
+    *,
+    reset: bool = False,
+) -> None:
+    store.append_event(
+        run_id,
+        "workspace_changes",
+        tracker.collect(reset=reset).model_dump(mode="json"),
     )
 
 
@@ -278,6 +302,8 @@ async def run_model_command(args: argparse.Namespace) -> int:
     )
     checkpoint_store = SqliteCheckpointStore(_checkpoint_path(workspace))
     store = SqliteRunStore(workspace)
+    approval_mode = _approval_mode(args)
+    stored_config = config.model_dump() | {"approval_mode": approval_mode.value}
     if args.command == "resume":
         run_id = args.run_id
         checkpoint = checkpoint_store.load(run_id)
@@ -293,10 +319,10 @@ async def run_model_command(args: argparse.Namespace) -> int:
                 source="cli",
                 task=checkpoint.task,
                 model_name=model_name,
-                config=config.model_dump(),
+                config=stored_config,
                 status=checkpoint.status,
             )
-        store.update_config(run_id, config.model_dump())
+        store.update_config(run_id, stored_config)
         store.append_event(run_id, "run_resume_queued", {"max_steps": config.max_steps})
     else:
         run_id = uuid4().hex
@@ -305,13 +331,13 @@ async def run_model_command(args: argparse.Namespace) -> int:
             source="cli",
             task=args.task,
             model_name=model_name,
-            config=config.model_dump(),
+            config=stored_config,
         )
         store.append_event(run_id, "run_queued", {"task": args.task})
 
-    base_approver = AlwaysApprover() if args.yes else ConsoleApprover()
-    approver = RecordingApprover(base_approver, store, run_id)
+    approver = RecordingApprover(ConsoleApprover(), store, run_id)
     recorder = PersistentRunRecorder(JsonlTraceSink(_trace_path(workspace)), store)
+    change_tracker = WorkspaceChangeTracker(workspace)
     provider = OpenAICompatibleProvider(
         api_key=api_key,
         base_url=base_url,
@@ -320,7 +346,11 @@ async def run_model_command(args: argparse.Namespace) -> int:
     try:
         runtime = AgentRuntime(
             provider,
-            create_default_registry(workspace, PermissionPolicy(approver), shell),
+            create_default_registry(
+                workspace,
+                PermissionPolicy(approver, mode=approval_mode),
+                shell,
+            ),
             config=config,
             trace=recorder,
             checkpoint=checkpoint_store,
@@ -341,6 +371,7 @@ async def run_model_command(args: argparse.Namespace) -> int:
     finally:
         recorder.flush_model_delta()
         await provider.aclose()
+        _record_workspace_changes(store, run_id, change_tracker)
 
     print(result.output or result.error or result.status.value)
     print(
@@ -399,10 +430,20 @@ async def run_chat_command(args: argparse.Namespace) -> int:
         max_context_tokens=args.max_context_tokens,
         max_total_tokens=args.max_total_tokens,
     )
+    approval_mode = _approval_mode(args)
 
-    def create_session() -> tuple[str, AgentRuntime, PersistentRunRecorder, ConsoleDeltaWriter]:
+    def create_session() -> tuple[
+        str,
+        AgentRuntime,
+        PersistentRunRecorder,
+        ConsoleDeltaWriter,
+        WorkspaceChangeTracker,
+    ]:
         run_id = uuid4().hex
-        stored_config = base_config.model_dump() | {"mode": "chat"}
+        stored_config = base_config.model_dump() | {
+            "mode": "chat",
+            "approval_mode": approval_mode.value,
+        }
         store.create_run(
             run_id=run_id,
             source="cli",
@@ -413,23 +454,27 @@ async def run_chat_command(args: argparse.Namespace) -> int:
         )
         recorder = PersistentRunRecorder(JsonlTraceSink(_trace_path(workspace)), store)
         approver = RecordingApprover(
-            AlwaysApprover() if args.yes else ConsoleApprover(),
+            ConsoleApprover(),
             store,
             run_id,
         )
         delta_writer = ConsoleDeltaWriter(recorder)
         runtime = AgentRuntime(
             provider,
-            create_default_registry(workspace, PermissionPolicy(approver), shell),
+            create_default_registry(
+                workspace,
+                PermissionPolicy(approver, mode=approval_mode),
+                shell,
+            ),
             config=base_config,
             trace=recorder,
             checkpoint=checkpoint_store,
             on_model_delta=delta_writer.on_model_delta,
         )
         runtime.start_session(run_id)
-        return run_id, runtime, recorder, delta_writer
+        return run_id, runtime, recorder, delta_writer, WorkspaceChangeTracker(workspace)
 
-    run_id, runtime, recorder, delta_writer = create_session()
+    run_id, runtime, recorder, delta_writer, change_tracker = create_session()
     has_user_message = False
     print("MiniCode Agent")
     print(f"Workspace: {workspace}")
@@ -483,7 +528,7 @@ async def run_chat_command(args: argparse.Namespace) -> int:
             if command == "/clear":
                 runtime.end_session(run_id, reason="cleared")
                 recorder.flush_model_delta()
-                run_id, runtime, recorder, delta_writer = create_session()
+                run_id, runtime, recorder, delta_writer, change_tracker = create_session()
                 has_user_message = False
                 print(f"Context cleared. New Run ID: {run_id}")
                 continue
@@ -505,12 +550,14 @@ async def run_chat_command(args: argparse.Namespace) -> int:
                 print(str(exc))
                 continue
             delta_writer.finish_turn(result)
+            _record_workspace_changes(store, run_id, change_tracker, reset=True)
             if result.usage.total_tokens >= args.max_total_tokens:
                 print("[token_limit] Session limit reached; use /clear to continue.")
             elif result.status is not RunStatus.COMPLETED:
                 print(f"[{result.status.value}] Continue with another message or use /clear.")
     except asyncio.CancelledError:
         runtime.cancel(run_id, reason="keyboard_interrupt")
+        _record_workspace_changes(store, run_id, change_tracker, reset=True)
         print("\nSession cancelled.")
         raise
     finally:
