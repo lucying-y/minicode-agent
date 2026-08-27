@@ -19,9 +19,11 @@ from minicode_agent.runtime.types import (
 
 if TYPE_CHECKING:
     from minicode_agent.runtime.agent import AgentRuntime, ToolExecutor
+    from minicode_agent.runtime.harness import AgentHarness
 
 __all__ = [
     "AgentConfig",
+    "AgentHarness",
     "AgentRuntime",
     "ContextManager",
     "Message",
@@ -43,4 +45,8 @@ def __getattr__(name: str) -> Any:
         from minicode_agent.runtime.agent import AgentRuntime, ToolExecutor
 
         return {"AgentRuntime": AgentRuntime, "ToolExecutor": ToolExecutor}[name]
+    if name == "AgentHarness":
+        from minicode_agent.runtime.harness import AgentHarness
+
+        return AgentHarness
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
