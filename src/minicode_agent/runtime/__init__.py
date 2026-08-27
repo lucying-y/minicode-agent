@@ -24,11 +24,13 @@ if TYPE_CHECKING:
 __all__ = [
     "AgentConfig",
     "AgentHarness",
+    "AgentPreset",
     "AgentRuntime",
     "ContextManager",
     "Message",
     "ModelResponse",
     "ModelStreamChunk",
+    "PresetDefinition",
     "RunCheckpoint",
     "RunResult",
     "RunStatus",
@@ -37,6 +39,7 @@ __all__ = [
     "ToolExecutor",
     "ToolResult",
     "ToolSchema",
+    "get_preset",
 ]
 
 
@@ -49,4 +52,12 @@ def __getattr__(name: str) -> Any:
         from minicode_agent.runtime.harness import AgentHarness
 
         return AgentHarness
+    if name in {"AgentPreset", "PresetDefinition", "get_preset"}:
+        from minicode_agent.runtime.presets import AgentPreset, PresetDefinition, get_preset
+
+        return {
+            "AgentPreset": AgentPreset,
+            "PresetDefinition": PresetDefinition,
+            "get_preset": get_preset,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
