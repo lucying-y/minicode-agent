@@ -27,11 +27,14 @@ from minicode_agent.persistence import (
 )
 from minicode_agent.runtime import (
     AgentConfig,
+    AgentHarness,
+    AgentPreset,
     AgentRuntime,
     ModelResponse,
     RunResult,
     RunStatus,
     ToolCall,
+    get_preset,
 )
 from minicode_agent.security import (
     ApprovalHandler,
@@ -154,6 +157,12 @@ def _add_runtime_options(command: argparse.ArgumentParser) -> None:
     command.add_argument("--max-steps", type=int, default=12)
     command.add_argument("--max-context-tokens", type=int, default=32_000)
     command.add_argument("--max-total-tokens", type=int, default=100_000)
+    command.add_argument(
+        "--preset",
+        choices=[preset.value for preset in AgentPreset],
+        default=AgentPreset.STANDARD.value,
+        help="select a named capability set and its context constraints",
+    )
     approval = command.add_mutually_exclusive_group()
     approval.add_argument(
         "--approval-mode",
@@ -250,14 +259,13 @@ async def run_demo(workspace: Path) -> int:
             ModelResponse(content=f"Demo completed after reading {readme}."),
         ]
     )
-    runtime = AgentRuntime(
-        model,
-        create_default_registry(workspace, shell=shell),
+    runtime = AgentHarness(
+        model=model,
+        tools=create_default_registry(workspace, shell=shell),
         config=config,
         trace=recorder,
         checkpoint=SqliteCheckpointStore(_checkpoint_path(workspace)),
-        on_model_delta=recorder.on_model_delta,
-    )
+    ).build_runtime(on_model_delta=recorder.on_model_delta)
     result = await runtime.run(task, run_id=run_id)
     recorder.flush_model_delta()
     print(result.output)
@@ -300,10 +308,16 @@ async def run_model_command(args: argparse.Namespace) -> int:
         max_context_tokens=args.max_context_tokens,
         max_total_tokens=args.max_total_tokens,
     )
+    preset = get_preset(args.preset)
+    config = preset.apply(config)
     checkpoint_store = SqliteCheckpointStore(_checkpoint_path(workspace))
     store = SqliteRunStore(workspace)
     approval_mode = _approval_mode(args)
-    stored_config = config.model_dump() | {"approval_mode": approval_mode.value}
+    stored_config = config.model_dump() | {
+        "approval_mode": approval_mode.value,
+        "preset": preset.name.value,
+        "tool_names": list(preset.tool_names),
+    }
     if args.command == "resume":
         run_id = args.run_id
         checkpoint = checkpoint_store.load(run_id)
@@ -344,18 +358,18 @@ async def run_model_command(args: argparse.Namespace) -> int:
         model=model_name,
     )
     try:
-        runtime = AgentRuntime(
-            provider,
-            create_default_registry(
+        runtime = AgentHarness(
+            model=provider,
+            tools=create_default_registry(
                 workspace,
                 PermissionPolicy(approver, mode=approval_mode),
                 shell,
+                allowed_tools=set(preset.tool_names),
             ),
             config=config,
             trace=recorder,
             checkpoint=checkpoint_store,
-            on_model_delta=recorder.on_model_delta,
-        )
+        ).build_runtime(on_model_delta=recorder.on_model_delta)
         if args.command == "resume":
             try:
                 result = await runtime.resume(args.run_id)
@@ -430,6 +444,8 @@ async def run_chat_command(args: argparse.Namespace) -> int:
         max_context_tokens=args.max_context_tokens,
         max_total_tokens=args.max_total_tokens,
     )
+    preset = get_preset(args.preset)
+    base_config = preset.apply(base_config)
     approval_mode = _approval_mode(args)
 
     def create_session() -> tuple[
@@ -443,6 +459,8 @@ async def run_chat_command(args: argparse.Namespace) -> int:
         stored_config = base_config.model_dump() | {
             "mode": "chat",
             "approval_mode": approval_mode.value,
+            "preset": preset.name.value,
+            "tool_names": list(preset.tool_names),
         }
         store.create_run(
             run_id=run_id,
@@ -459,18 +477,18 @@ async def run_chat_command(args: argparse.Namespace) -> int:
             run_id,
         )
         delta_writer = ConsoleDeltaWriter(recorder)
-        runtime = AgentRuntime(
-            provider,
-            create_default_registry(
+        runtime = AgentHarness(
+            model=provider,
+            tools=create_default_registry(
                 workspace,
                 PermissionPolicy(approver, mode=approval_mode),
                 shell,
+                allowed_tools=set(preset.tool_names),
             ),
             config=base_config,
             trace=recorder,
             checkpoint=checkpoint_store,
-            on_model_delta=delta_writer.on_model_delta,
-        )
+        ).build_runtime(on_model_delta=delta_writer.on_model_delta)
         runtime.start_session(run_id)
         return run_id, runtime, recorder, delta_writer, WorkspaceChangeTracker(workspace)
 
@@ -479,6 +497,7 @@ async def run_chat_command(args: argparse.Namespace) -> int:
     print("MiniCode Agent")
     print(f"Workspace: {workspace}")
     print(f"Model: {model_name}")
+    print(f"Preset: {preset.name.value}")
     print(f"Shell: {shell.info.display_name}")
     print(f"Run ID: {run_id}")
     print("Type /help for commands. Use /exit, /quit, exit, or quit to leave.\n")
@@ -509,7 +528,8 @@ async def run_chat_command(args: argparse.Namespace) -> int:
                     continue
                 print(
                     f"run_id={run_id} status={stored.status} steps={checkpoint.steps} "
-                    f"tokens={checkpoint.usage.total_tokens} messages={len(checkpoint.messages)}"
+                    f"tokens={checkpoint.usage.total_tokens} messages={len(checkpoint.messages)} "
+                    f"preset={preset.name.value} tools={','.join(preset.tool_names)}"
                 )
                 continue
             if command == "/history":

@@ -28,6 +28,7 @@ def test_parser_accepts_run_configuration() -> None:
     assert args.max_steps == 5
     assert args.max_total_tokens == 100_000
     assert args.approval_mode == "ask"
+    assert args.preset == "standard"
 
     auto_args = build_parser().parse_args(["run", "fix", "--approval-mode", "auto"])
     assert auto_args.approval_mode == "auto"
@@ -39,7 +40,11 @@ def test_parser_accepts_run_configuration() -> None:
     chat_args = build_parser().parse_args(["chat", "--workspace", "/tmp/chat"])
     assert chat_args.command == "chat"
     assert chat_args.workspace == Path("/tmp/chat")
+    assert chat_args.preset == "standard"
     assert build_parser().parse_args([]).command is None
+
+    minimal_args = build_parser().parse_args(["chat", "--preset", "minimal"])
+    assert minimal_args.preset == "minimal"
 
     resume_args = build_parser().parse_args(["resume", "run-123", "--max-steps", "20"])
     assert resume_args.command == "resume"
@@ -136,11 +141,14 @@ async def test_chat_keeps_context_and_clear_starts_new_run(
     )
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
 
-    exit_code = await async_main(["chat", "--workspace", str(tmp_path)])
+    exit_code = await async_main(
+        ["chat", "--workspace", str(tmp_path), "--preset", "minimal"]
+    )
 
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "MiniCode Agent" in output
+    assert "Preset: minimal" in output
     assert "first answer" in output
     assert "second answer" in output
     assert "1. first question" in output
@@ -148,6 +156,8 @@ async def test_chat_keeps_context_and_clear_starts_new_run(
     assert "Context cleared. New Run ID:" in output
     first_request, _ = fake_model.requests[0]
     assert "Runtime environment:" in first_request[0].content
+    _, first_tools = fake_model.requests[0]
+    assert {tool.name for tool in first_tools} == {"read_file", "list_files", "search_text"}
     second_request, _ = fake_model.requests[1]
     assert [(message.role, message.content) for message in second_request[-3:]] == [
         ("user", "first question"),
