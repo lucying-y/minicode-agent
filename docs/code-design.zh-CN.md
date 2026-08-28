@@ -104,9 +104,10 @@ flowchart TD
     User --> React["React Web Console"]
     React <--> API["FastAPI REST + SSE"]
     API --> Manager["RunManager"]
-    CLI --> Runtime["AgentRuntime"]
-    Manager --> Runtime
+    CLI --> Harness["AgentHarness"]
+    Manager --> Harness
     Runtime --> Context["ContextManager"]
+    Harness --> Runtime["AgentRuntime"]
     Runtime <--> Provider["ModelProvider"]
     Runtime --> Registry["ToolRegistry"]
     Registry --> Policy["PermissionPolicy"]
@@ -120,7 +121,7 @@ flowchart TD
 各模块只承担一类职责：
 
 - `cli`：读取参数和环境变量，组装所有依赖，处理终端审批；
-- `runtime`：控制 Agent Loop、消息、限制、状态和停止条件；
+- `runtime`：通过 `AgentHarness` 组装可替换能力，并由 `AgentRuntime` 控制 Agent Loop、消息、限制、状态和停止条件；
 - `models`：适配不同模型协议，不负责文件和命令操作；
 - `tools`：定义模型可以请求的能力，并执行通过校验的调用；
 - `security`：限制工作区路径，决定工具是否需要审批或必须拒绝；
@@ -128,6 +129,20 @@ flowchart TD
 - `evaluation`：在独立目录运行固定任务，并用外部命令验收；
 - `web`：提供 API、持久化运行查询、SSE 轮询和异步网页审批；
 - `web/` 前端目录：提供 React 运行列表、时间线、事件详情和审批界面。
+
+### Harness 与 Preset
+
+`AgentHarness` 是 Runtime 的能力组合边界。它不实现新的模型循环，而是把模型、工具、配置、上下文、Trace 和 Checkpoint 交给 `AgentRuntime`，因此 CLI、Web、评测和测试可以复用同一套组装方式。
+
+`AgentPreset` 是一组经过命名的能力选择。目前提供：
+
+| Preset | 工具 | 上下文 |
+| --- | --- | --- |
+| `minimal` | `read_file`、`list_files`、`search_text` | 最多 8,000 Token |
+| `standard` | 全部默认工具 | 使用调用方配置 |
+| `review` | 只读工具和 `run_shell` | 使用调用方配置 |
+
+Preset 只限制模型可见的工具集合和上下文上限，不绕过工作区边界、审批模式或高风险命令拒绝规则。
 
 这种拆分有两个直接好处：
 
@@ -142,7 +157,9 @@ src/minicode_agent/
 ├── runtime/
 │   ├── types.py                   # 消息、调用、结果、配置、状态等数据模型
 │   ├── agent.py                   # Agent Loop 核心
-│   └── context.py                 # 上下文预算与消息裁剪
+│   ├── context.py                 # 上下文预算与消息裁剪
+│   ├── harness.py                 # Model、Tool、Policy、Persistence 的组合边界
+│   └── presets.py                 # minimal/standard/review 能力 Preset
 ├── models/
 │   ├── base.py                    # ModelProvider 协议
 │   ├── fake.py                    # 可预测的测试模型

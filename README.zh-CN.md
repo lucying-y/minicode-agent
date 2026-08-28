@@ -33,6 +33,8 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 - 提供持久化交互式 CLI，在同一会话中保留多轮上下文并支持斜杠命令。
 - 提供可重复运行的仓库任务评测，通过确定性校验命令判断结果并生成 JSON 报告。
 - 提供确定性的 Fake Provider，用于离线测试和演示。
+- 参考 DeepSeek Harness 的 Capability Seam 思想，提供显式的 `AgentHarness` 组合层和
+  `minimal`、`standard`、`review` 三种能力 Preset。
 - 提供本地 React Web Console，通过 FastAPI、SSE、网页审批、主动取消和 Checkpoint 恢复观察与
   控制任务。
 - Web 任务可在模型请求、等待审批或 Shell 执行阶段取消；CLI 使用 `Ctrl+C` 时也会保存取消状态。
@@ -182,6 +184,23 @@ uv run minicode run "修复并测试" --workspace /path/to/repo --approval-mode 
 
 `--yes` 是 `--approval-mode auto` 的兼容别名。三种模式都不能绕过工作区、敏感路径和高风险
 命令限制。
+
+### Harness Preset
+
+Preset 用于一次性组合模型可见的工具集合和上下文限制：
+
+```bash
+uv run minicode run "只检查仓库" --workspace /path/to/repo --preset review
+uv run minicode chat --workspace /path/to/repo --preset minimal
+```
+
+- `minimal`：只提供文件读取、列举和文本搜索，默认上下文上限为 8,000 Token；
+- `standard`：提供完整的读写文件、Shell 和审批能力，是默认 Preset；
+- `review`：提供只读文件工具和 Shell，适合代码审查与测试执行。
+
+当前 Preset、工具集合和审批模式会记录在 Run Store，并在 Web Console 的运行配置中展示。
+`AgentHarness` 负责组装 Model、Tool、Policy、Context、Trace 和 Checkpoint，`AgentRuntime` 负责
+实际的模型-工具循环。
 
 每次运行都会输出一个 `run_id`。如果任务因步数限制、Token 限制、工具错误或模型服务错误
 而停止，可在调整限制或修复外部问题后，从最后一个一致的模型/工具边界继续执行：
