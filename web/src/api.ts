@@ -18,6 +18,7 @@ export const api = {
   getRun: (runId: string) => request<Run>(`/api/runs/${runId}`),
   getEvents: (runId: string) =>
     request<ConsoleEvent[]>(`/api/runs/${runId}/events/history`),
+  replayRun: (runId: string) => request(`/api/runs/${runId}/replay`),
   getChanges: (runId: string) => request<WorkspaceChanges[]>(`/api/runs/${runId}/changes`),
   getTests: (runId: string) => request<TestResult[]>(`/api/runs/${runId}/tests`),
   createRun: (input: CreateRunInput) =>

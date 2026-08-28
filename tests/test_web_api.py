@@ -93,6 +93,7 @@ async def test_web_auto_mode_records_changes_and_test_results(tmp_path: Path) ->
         await _wait_for_status(manager, run_id, "completed")
 
         events = (await client.get(f"/api/runs/{run_id}/events/history")).json()
+        replay = (await client.get(f"/api/runs/{run_id}/replay")).json()
         changes = (await client.get(f"/api/runs/{run_id}/changes")).json()
         tests = (await client.get(f"/api/runs/{run_id}/tests")).json()
 
@@ -102,6 +103,10 @@ async def test_web_auto_mode_records_changes_and_test_results(tmp_path: Path) ->
     assert changes[-1]["files"][0]["status"] == "modified"
     assert tests[0]["command"] == "python -m pytest --version"
     assert tests[0]["status"] == "passed"
+    assert replay["run_id"] == run_id
+    assert replay["status"] == "completed"
+    assert replay["output"] == "done"
+    assert replay["messages"][-1]["content"] == "done"
     await manager.shutdown()
 
 

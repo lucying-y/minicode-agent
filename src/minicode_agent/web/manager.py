@@ -13,6 +13,8 @@ from minicode_agent.models.base import ModelProvider
 from minicode_agent.persistence import (
     JsonlTraceSink,
     PersistentRunRecorder,
+    ReplayState,
+    SessionReplay,
     SqliteCheckpointStore,
     SqliteRunStore,
     StoredRun,
@@ -126,6 +128,10 @@ class RunManager:
 
     def get_events(self, run_id: str) -> list[dict]:
         return self._find_store(run_id).list_events(run_id)
+
+    def replay_run(self, run_id: str) -> ReplayState:
+        """Reconstruct a run from its append-only event log."""
+        return SessionReplay.project(self.get_events(run_id))
 
     def get_artifacts(self, run_id: str, event_type: str) -> list[dict]:
         return [

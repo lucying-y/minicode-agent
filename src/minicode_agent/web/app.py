@@ -74,6 +74,15 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/runs/{run_id}/replay")
+    async def replay_run(run_id: str) -> dict:
+        try:
+            return manager.replay_run(run_id).model_dump(mode="json")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.get("/api/runs/{run_id}/changes")
     async def workspace_changes(run_id: str) -> list[dict]:
         try:
