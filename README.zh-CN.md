@@ -153,6 +153,7 @@ uv run minicode chat --workspace /path/to/repo
 | `/help` | 显示命令帮助 |
 | `/status` | 显示 Run ID、状态、累计步数、Token 和消息数 |
 | `/history` | 显示当前会话中的用户消息 |
+| `/replay` | 从 Session Event Log 重建并显示当前会话状态 |
 | `/clear` | 结束当前 Run，创建一个没有旧上下文的新 Run |
 | `/exit`、`/quit` | 退出 MiniCode；直接输入 `exit` 或 `quit` 也可以 |
 
@@ -201,6 +202,9 @@ uv run minicode chat --workspace /path/to/repo --preset minimal
 当前 Preset、工具集合和审批模式会记录在 Run Store，并在 Web Console 的运行配置中展示。
 `AgentHarness` 负责组装 Model、Tool、Policy、Context、Trace 和 Checkpoint，`AgentRuntime` 负责
 实际的模型-工具循环。
+
+CLI 会话中输入 `/replay` 可以从 `.minicode/runs.db` 的追加式事件重新计算状态；Web API 也提供
+`GET /api/runs/{id}/replay`。Replay 用于审计和回放视图，继续执行仍使用 Checkpoint。
 
 每次运行都会输出一个 `run_id`。如果任务因步数限制、Token 限制、工具错误或模型服务错误
 而停止，可在调整限制或修复外部问题后，从最后一个一致的模型/工具边界继续执行：

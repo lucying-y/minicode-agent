@@ -254,6 +254,7 @@ CLI 的任务句柄；CLI 使用 `Ctrl+C` 时会自行记录取消状态。
 | `POST` | `/api/runs` | 创建并异步启动任务 |
 | `GET` | `/api/runs/{id}` | 查询一次运行的最新摘要 |
 | `GET` | `/api/runs/{id}/events/history` | 查询 Run Store 中的完整时间线事件 |
+| `GET` | `/api/runs/{id}/replay` | 仅根据 Session Event Log 重建运行状态和消息 |
 | `GET` | `/api/runs/{id}/changes` | 查询任务分段产生的结构化文件变化 |
 | `GET` | `/api/runs/{id}/tests` | 查询识别出的结构化测试结果 |
 | `GET` | `/api/runs/{id}/events` | 订阅 SSE 实时事件 |
@@ -270,7 +271,8 @@ CLI 的任务句柄；CLI 使用 `Ctrl+C` 时会自行记录取消状态。
   "max_steps": 12,
   "max_context_tokens": 32000,
   "max_total_tokens": 100000,
-  "approval_mode": "ask"
+  "approval_mode": "ask",
+  "preset": "standard"
 }
 ```
 

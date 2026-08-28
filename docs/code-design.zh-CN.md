@@ -651,7 +651,9 @@ JSONL 表示每一行都是一个完整 JSON 对象。追加写入比维护一�
 每个运行使用独立的 `run_id`，事件通过从 1 递增的 `sequence` 排序。恢复任务时会从 Checkpoint
 保存的轨迹序号继续递增。
 
-Trace 适合回答“模型为什么这么做”和“哪一步失败”，但它不是恢复来源，也不会自动重新驱动任务。
+Trace 适合回答“模型为什么这么做”和“哪一步失败”。`SessionReplay` 可以只根据有序事件重建消息、
+状态、步数、Token 和最终输出，并通过 CLI `/replay` 或 Web `GET /api/runs/{id}/replay` 查询。
+Replay 是审计和回放投影，不会自动重新驱动任务；继续执行仍依赖 Checkpoint。
 
 ### 11.1 Run Store：用于 CLI/Web 共用时间线
 
