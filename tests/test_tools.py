@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from minicode_agent.runtime import ToolCall
+from minicode_agent.runtime import ToolCall, ToolResult
 from minicode_agent.security import ApprovalMode, PermissionLevel, PermissionPolicy
 from minicode_agent.tools import create_default_registry
 
@@ -13,6 +13,24 @@ class StaticApprover:
     async def approve(self, call: ToolCall, permission: PermissionLevel) -> bool:
         self.requests.append((call, permission))
         return self.approved
+
+
+class RecordingHook:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    async def before_execute(self, call: ToolCall, permission: PermissionLevel) -> None:
+        self.events.append(f"before:{call.name}:{permission.value}")
+
+    async def after_execute(
+        self,
+        call: ToolCall,
+        permission: PermissionLevel,
+        result: ToolResult,
+    ) -> ToolResult:
+        self.events.append(f"after:{call.name}:{permission.value}:{result.is_error}")
+        result.metadata["hooked"] = True
+        return result
 
 
 async def test_read_and_search_are_workspace_scoped(tmp_path: Path) -> None:
@@ -34,6 +52,60 @@ async def test_read_and_search_are_workspace_scoped(tmp_path: Path) -> None:
     assert "app.py:1:value = 42" in search_result.content
     assert escape_result.is_error
     assert "escapes workspace" in escape_result.content
+
+
+async def test_tool_hooks_run_around_validation_and_execution(tmp_path: Path) -> None:
+    hook = RecordingHook()
+    registry = create_default_registry(tmp_path)
+    registry.add_hook(hook)
+
+    result = await registry.execute(
+        ToolCall(id="hooked", name="list_files", arguments={"pattern": "*.py"})
+    )
+
+    assert not result.is_error
+    assert result.metadata["hooked"] is True
+    assert hook.events == ["before:list_files:read", "after:list_files:read:False"]
+
+
+async def test_hook_cannot_bypass_permission_policy(tmp_path: Path) -> None:
+    hook = RecordingHook()
+    registry = create_default_registry(tmp_path, hooks=[hook])
+
+    result = await registry.execute(
+        ToolCall(
+            id="denied-hook",
+            name="edit_file",
+            arguments={"path": "x.py", "old_text": "", "new_text": "value = 1"},
+        )
+    )
+
+    assert result.is_error
+    assert "requires explicit approval" in result.content
+    assert hook.events == ["before:edit_file:write", "after:edit_file:write:True"]
+
+
+async def test_hook_failure_is_returned_as_structured_error(tmp_path: Path) -> None:
+    class FailingHook:
+        async def before_execute(self, call: ToolCall, permission: PermissionLevel) -> None:
+            del call, permission
+            raise RuntimeError("audit unavailable")
+
+        async def after_execute(
+            self,
+            call: ToolCall,
+            permission: PermissionLevel,
+            result: ToolResult,
+        ) -> ToolResult:
+            del call, permission
+            return result
+
+    registry = create_default_registry(tmp_path, hooks=[FailingHook()])
+
+    result = await registry.execute(ToolCall(id="failed-hook", name="list_files", arguments={}))
+
+    assert result.is_error
+    assert result.content == "hook error: RuntimeError: audit unavailable"
 
 
 async def test_sensitive_files_are_hidden_and_blocked(tmp_path: Path) -> None:
