@@ -32,16 +32,17 @@ describe("timeline projections", () => {
   it("groups tool follow-up events and hides dedicated artifacts", () => {
     const items = groupTimelineEvents([
       event(1, "model_response", { step: 1, tool_calls: [{ name: "run_shell" }] }),
-      event(2, "approval_required", { call: { name: "run_shell" } }),
-      event(3, "tool_result", { call: { name: "run_shell" } }),
-      event(4, "test_result", { command: "pytest" }),
-      event(5, "workspace_changes", { files: [] }),
-      event(6, "run_finished", { status: "completed" }),
+      event(2, "tool_requested", { call: { name: "run_shell" } }),
+      event(3, "approval_required", { call: { name: "run_shell" } }),
+      event(4, "tool_result", { call: { name: "run_shell" } }),
+      event(5, "test_result", { command: "pytest" }),
+      event(6, "workspace_changes", { files: [] }),
+      event(7, "run_finished", { status: "completed" }),
     ]);
 
     expect(items).toHaveLength(2);
     expect(items[0].kind).toBe("tool-group");
-    if (items[0].kind === "tool-group") expect(items[0].events).toHaveLength(3);
+    if (items[0].kind === "tool-group") expect(items[0].events).toHaveLength(4);
     expect(items[1].kind).toBe("event");
   });
 });

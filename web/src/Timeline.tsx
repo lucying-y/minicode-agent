@@ -22,6 +22,7 @@ export function eventPresentation(event: ConsoleEvent) {
     case "session_finished": return { icon: CheckCircle2, title: "CLI 会话已退出", tone: "positive" };
     case "run_resumed": return { icon: RotateCcw, title: "从 Checkpoint 恢复", tone: "positive" };
     case "model_response": return { icon: Bot, title: toolCalls?.length ? `模型请求 ${toolCalls.length} 个工具` : "模型返回最终结果", tone: "model" };
+    case "tool_requested": return { icon: Wrench, title: `工具进入执行管线：${toolCall?.name || "未知工具"}`, tone: "tool" };
     case "approval_required": return { icon: ShieldAlert, title: `等待审批：${toolCall?.name || "工具"}`, tone: "warning" };
     case "approval_resolved": return { icon: event.data.approved ? Check : X, title: event.data.approved ? "操作已批准" : "操作已拒绝", tone: event.data.approved ? "positive" : "danger" };
     case "tool_result": return { icon: Wrench, title: `工具完成：${toolCall?.name || "未知工具"}`, tone: "tool" };
@@ -52,7 +53,7 @@ export type TimelineItem =
   | { kind: "event"; event: ConsoleEvent }
   | { kind: "tool-group"; events: ConsoleEvent[] };
 
-const toolFollowUpEvents = new Set(["approval_required", "approval_resolved", "tool_result"]);
+const toolFollowUpEvents = new Set(["tool_requested", "approval_required", "approval_resolved", "tool_result"]);
 
 export function groupTimelineEvents(events: ConsoleEvent[]): TimelineItem[] {
   const hidden = new Set(["model_output_delta", "workspace_changes", "test_result"]);
