@@ -128,6 +128,7 @@ async def test_chat_keeps_context_and_clear_starts_new_run(
             "follow up",
             "/status",
             "/history",
+            "/replay",
             "/clear",
             "/exit",
         ]
@@ -153,6 +154,7 @@ async def test_chat_keeps_context_and_clear_starts_new_run(
     assert "second answer" in output
     assert "1. first question" in output
     assert "2. follow up" in output
+    assert "replay run_id=" in output
     assert "Context cleared. New Run ID:" in output
     first_request, _ = fake_model.requests[0]
     assert "Runtime environment:" in first_request[0].content

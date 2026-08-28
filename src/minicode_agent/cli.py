@@ -22,6 +22,7 @@ from minicode_agent.models import FakeModelProvider, OpenAICompatibleProvider
 from minicode_agent.persistence import (
     JsonlTraceSink,
     PersistentRunRecorder,
+    SessionReplay,
     SqliteCheckpointStore,
     SqliteRunStore,
 )
@@ -401,6 +402,7 @@ def _print_chat_help() -> None:
         "  /help             Show this help\n"
         "  /status           Show the current session state\n"
         "  /history          Show user messages in this session\n"
+        "  /replay           Rebuild and show state from the Session Event Log\n"
         "  /clear            Start a new session with empty context\n"
         "  /exit, /quit      Exit MiniCode\n"
         "  exit, quit        Exit MiniCode"
@@ -544,6 +546,22 @@ async def run_chat_command(args: argparse.Namespace) -> int:
                 else:
                     for index, message in enumerate(user_messages, start=1):
                         print(f"{index}. {message}")
+                continue
+            if command == "/replay":
+                try:
+                    replay = SessionReplay.project(store.list_events(run_id))
+                except ValueError as exc:
+                    print(f"Replay unavailable: {exc}")
+                    continue
+                print(
+                    f"replay run_id={replay.run_id} status={replay.status} "
+                    f"steps={replay.steps} tokens={replay.usage.total_tokens} "
+                    f"messages={len(replay.messages)} events={replay.event_count}"
+                )
+                if replay.output:
+                    print(f"output: {replay.output}")
+                if replay.error:
+                    print(f"error: {replay.error}")
                 continue
             if command == "/clear":
                 runtime.end_session(run_id, reason="cleared")
