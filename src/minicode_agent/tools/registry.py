@@ -84,4 +84,6 @@ class ToolRegistry:
                     metadata={"tool": call.name},
                 )
                 break
+        result.metadata.setdefault("duration_ms", round((finished - started) * 1000, 3))
+        result.metadata.setdefault("tool", call.name)
         return result

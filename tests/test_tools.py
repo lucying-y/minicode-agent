@@ -2,7 +2,7 @@ from pathlib import Path
 
 from minicode_agent.runtime import ToolCall, ToolResult
 from minicode_agent.security import ApprovalMode, PermissionLevel, PermissionPolicy
-from minicode_agent.tools import create_default_registry
+from minicode_agent.tools import AuditHook, ToolAuditEvent, create_default_registry
 
 
 class StaticApprover:
@@ -106,6 +106,41 @@ async def test_hook_failure_is_returned_as_structured_error(tmp_path: Path) -> N
 
     assert result.is_error
     assert result.content == "hook error: RuntimeError: audit unavailable"
+
+
+async def test_audit_hook_emits_request_and_completion_records(tmp_path: Path) -> None:
+    records: list[ToolAuditEvent] = []
+    registry = create_default_registry(tmp_path, hooks=[AuditHook(records.append)])
+
+    result = await registry.execute(ToolCall(id="audit", name="list_files", arguments={}))
+
+    assert not result.is_error
+    assert [record.phase for record in records] == ["requested", "completed"]
+    assert records[0].call.id == "audit"
+    assert records[1].result is result
+
+
+async def test_hook_replacement_keeps_registry_metadata(tmp_path: Path) -> None:
+    class ReplaceResultHook:
+        async def before_execute(self, call: ToolCall, permission: PermissionLevel) -> None:
+            del call, permission
+
+        async def after_execute(
+            self,
+            call: ToolCall,
+            permission: PermissionLevel,
+            result: ToolResult,
+        ) -> ToolResult:
+            del call, permission, result
+            return ToolResult(content="replaced")
+
+    registry = create_default_registry(tmp_path, hooks=[ReplaceResultHook()])
+
+    result = await registry.execute(ToolCall(id="replace", name="list_files", arguments={}))
+
+    assert result.content == "replaced"
+    assert result.metadata["tool"] == "list_files"
+    assert "duration_ms" in result.metadata
 
 
 async def test_sensitive_files_are_hidden_and_blocked(tmp_path: Path) -> None:
