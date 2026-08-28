@@ -30,3 +30,37 @@ async def test_jsonl_trace_records_ordered_run_events(tmp_path: Path) -> None:
 def test_session_event_type_serializes_as_stable_wire_name() -> None:
     assert SessionEventType.MODEL_RESPONSE == "model_response"
     assert SessionEventType.MODEL_RESPONSE.value == "model_response"
+
+
+async def test_trace_records_tool_request_before_result(tmp_path: Path) -> None:
+    trace_path = tmp_path / "tools.jsonl"
+    runtime = AgentRuntime(
+        FakeModelProvider(
+            [
+                ModelResponse(
+                    tool_calls=[
+                        {
+                            "id": "call-1",
+                            "name": "echo",
+                            "arguments": {"text": "hello"},
+                        }
+                    ]
+                ),
+                ModelResponse(content="done"),
+            ]
+        ),
+        StubTools(),
+        trace=JsonlTraceSink(trace_path),
+    )
+
+    await runtime.run("use a tool")
+
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert [event["event_type"] for event in events] == [
+        "run_started",
+        "model_response",
+        "tool_requested",
+        "tool_result",
+        "model_response",
+        "run_finished",
+    ]

@@ -307,6 +307,11 @@ class AgentRuntime:
                 )
 
             for call in response.tool_calls:
+                self._emit(
+                    run_id,
+                    "tool_requested",
+                    {"step": step, "call": call.model_dump(mode="json")},
+                )
                 result = await self._execute_tool(call)
                 messages.append(
                     Message(
