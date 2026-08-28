@@ -466,12 +466,22 @@ Provider 默认请求超时为 120 秒，目前没有自动重试或退避。流
 
 ```text
 查找工具
+  -> ToolHook.before_execute
   -> Pydantic 参数校验
   -> PermissionPolicy 授权
   -> Tool.run 执行
   -> 记录工具名称和耗时
+  -> ToolHook.after_execute
   -> 返回结构化 ToolResult
 ```
+
+`ToolHook` 是工具侧的 Capability Seam。`before_execute` 只能观察调用，不能绕过参数校验或权限
+策略；`after_execute` 可以观察或替换结构化结果。Hook 异常会被转换成 `is_error=true` 的结果，
+不会让整个 Agent 进程崩溃。
+
+内置的 `AuditHook` 会向调用方提供 `ToolAuditEvent`，分别标记 `requested` 和 `completed` 两个
+阶段。Runtime 同时将工具请求写入 `tool_requested` 事件，将执行结果写入 `tool_result` 事件；
+Web 时间线会把它们折叠在同一个工具调用组中。
 
 未知工具、参数错误、权限拒绝、路径越界和常见 I/O 错误都会被转换成结构化错误，而不是让整个
 Agent 进程崩溃。

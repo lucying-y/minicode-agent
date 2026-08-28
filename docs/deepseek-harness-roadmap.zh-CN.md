@@ -39,7 +39,7 @@ Harness 负责“组装能力”，AgentRuntime 负责“执行循环”。这�
 
 CLI 可以使用 `--preset review`，Web 创建任务时显示当前 Preset 及其能力摘要。
 
-### P0-3：Session Event Log 和 Replay
+### P0-3：Session Event Log 和 Replay（已完成）
 
 将 Session 事件作为运行事实来源，再从事件投影出时间线、消息历史、状态和用量：
 
@@ -51,9 +51,10 @@ Timeline / Message / Status / Usage Projection
 Web 观察、CLI 查询、Replay、JSON 导出
 ```
 
-当前 SQLite Run Store 已经具备事件记录基础，后续需要统一事件类型、补充 `model_request`、`tool_requested` 和 `context_compacted` 等事件，并增加回放接口。
+当前 SQLite Run Store 已统一事件类型，Runtime 会记录 `tool_requested` 生命周期事件，并通过
+`SessionReplay` 和 CLI/Web 接口重建运行状态。`model_request`、`context_compacted` 等更细粒度事件仍可在后续迭代补充。
 
-### P0-4：Tool Pipeline 和 Hooks
+### P0-4：Tool Pipeline 和 Hooks（已完成）
 
 工具调用按照固定管线执行：
 
@@ -61,7 +62,8 @@ Web 观察、CLI 查询、Replay、JSON 导出
 before_execute → 参数校验 → 权限/审批 → 工具执行 → after_execute → 事件记录
 ```
 
-Hooks 可用于审计、脱敏、耗时统计和限流，保持工具实现本身简单。
+当前已实现 `ToolHook` 协议、`AuditHook` 和 `tool_requested` 生命周期事件。Hooks 可继续扩展到
+脱敏、耗时统计和限流，同时保持工具实现本身简单。
 
 ## 4. P1 优先事项
 

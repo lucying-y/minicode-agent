@@ -35,6 +35,7 @@ MiniCode Agent 是一个面向代码仓库任务的轻量级、可审查 Coding 
 - 提供确定性的 Fake Provider，用于离线测试和演示。
 - 参考 DeepSeek Harness 的 Capability Seam 思想，提供显式的 `AgentHarness` 组合层和
   `minimal`、`standard`、`review` 三种能力 Preset。
+- 提供 `ToolHook` 执行管线和 `AuditHook`，记录工具进入管线与完成结果，便于审计和后续扩展。
 - 提供本地 React Web Console，通过 FastAPI、SSE、网页审批、主动取消和 Checkpoint 恢复观察与
   控制任务。
 - Web 任务可在模型请求、等待审批或 Shell 执行阶段取消；CLI 使用 `Ctrl+C` 时也会保存取消状态。
