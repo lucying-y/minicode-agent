@@ -94,6 +94,8 @@ function Inspector({
           <div><dt>来源</dt><dd><SourceBadge source={run.source} /></dd></div>
           <div><dt>会话</dt><dd>{run.mode === "chat" ? "交互会话" : "单次任务"}</dd></div>
           <div><dt>审批</dt><dd>{approvalModeLabel[run.approval_mode]}</dd></div>
+          <div><dt>Preset</dt><dd>{run.preset}</dd></div>
+          <div><dt>工具</dt><dd title={run.tool_names.join(", ")}>{run.tool_names.length} 个</dd></div>
           <div><dt>模型</dt><dd title={run.model_name}>{run.model_name}</dd></div>
           <div><dt>工作区</dt><dd title={run.workspace}>{run.workspace}</dd></div>
           <div><dt>最大步数</dt><dd>{run.max_steps}</dd></div>
@@ -228,7 +230,7 @@ export default function App() {
           {selectedRun ? <>
             <div className="run-header">
               <div className="run-heading">
-                <div className="run-status-line"><span className={`status-chip status-${selectedRun.status}`}><span />{statusLabel[selectedRun.status] || selectedRun.status}</span><SourceBadge source={selectedRun.source} />{selectedRun.mode === "chat" && <span className="source-badge mode-chat">CHAT</span>}<span className="workspace-path"><FolderGit2 size={14} />{selectedRun.workspace}</span></div>
+                <div className="run-status-line"><span className={`status-chip status-${selectedRun.status}`}><span />{statusLabel[selectedRun.status] || selectedRun.status}</span><SourceBadge source={selectedRun.source} />{selectedRun.mode === "chat" && <span className="source-badge mode-chat">CHAT</span>}<span className="source-badge">{selectedRun.preset}</span><span className="workspace-path"><FolderGit2 size={14} />{selectedRun.workspace}</span></div>
                 <h1>{selectedRun.task}</h1>
               </div>
               <div className="run-actions">

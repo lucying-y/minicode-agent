@@ -1,10 +1,15 @@
 import { AlertTriangle, FolderGit2, Play, RefreshCw, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "./api";
-import type { ApprovalMode, CreateRunInput, Run } from "./types";
+import type { AgentPreset, ApprovalMode, CreateRunInput, Run } from "./types";
 import { approvalModeLabel } from "./ui";
 
 const approvalModes: ApprovalMode[] = ["ask", "auto", "read_only"];
+const presets: { value: AgentPreset; label: string; description: string }[] = [
+  { value: "standard", label: "Standard", description: "读写文件、Shell 与审批" },
+  { value: "minimal", label: "Minimal", description: "只读检查与紧凑上下文" },
+  { value: "review", label: "Review", description: "只读分析与测试执行" },
+];
 
 export function NewRunDialog({
   open,
@@ -24,6 +29,7 @@ export function NewRunDialog({
     max_context_tokens: 32000,
     max_total_tokens: 100000,
     approval_mode: "ask",
+    preset: "standard",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -91,6 +97,24 @@ export function NewRunDialog({
                 onClick={() => setForm({ ...form, approval_mode: mode })}
               >
                 {approvalModeLabel[mode]}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="approval-mode-field">
+          <legend>Harness Preset</legend>
+          <div className="segmented-control">
+            {presets.map((preset) => (
+              <button
+                key={preset.value}
+                type="button"
+                aria-pressed={form.preset === preset.value}
+                className={form.preset === preset.value ? "active" : ""}
+                title={preset.description}
+                onClick={() => setForm({ ...form, preset: preset.value })}
+              >
+                {preset.label}
               </button>
             ))}
           </div>

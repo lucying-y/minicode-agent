@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from minicode_agent.artifacts import extract_test_result
 from minicode_agent.persistence.trace import JsonlTraceSink, TraceEvent
+from minicode_agent.runtime import AgentPreset, get_preset
 
 
 def _now() -> str:
@@ -38,6 +39,8 @@ class StoredRun(BaseModel):
     source: Literal["cli", "web"]
     mode: Literal["task", "chat"]
     approval_mode: Literal["ask", "auto", "read_only"]
+    preset: AgentPreset
+    tool_names: list[str]
     task: str
     workspace: str
     model_name: str
@@ -338,6 +341,10 @@ class SqliteRunStore:
             source=row["source"],
             mode=config.get("mode", "task"),
             approval_mode=config.get("approval_mode", "ask"),
+            preset=config.get("preset", AgentPreset.STANDARD.value),
+            tool_names=config.get(
+                "tool_names", list(get_preset(AgentPreset.STANDARD).tool_names)
+            ),
             task=row["task"],
             workspace=row["workspace"],
             model_name=row["model_name"],

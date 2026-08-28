@@ -19,12 +19,14 @@ from minicode_agent.persistence import (
 )
 from minicode_agent.runtime import (
     AgentConfig,
-    AgentRuntime,
+    AgentHarness,
+    AgentPreset,
     Message,
     RunCheckpoint,
     RunStatus,
     TokenUsage,
     ToolCall,
+    get_preset,
 )
 from minicode_agent.security import ApprovalMode, PermissionLevel, PermissionPolicy, Workspace
 from minicode_agent.tools import create_default_registry
@@ -47,6 +49,7 @@ class _RunRecord:
     workspace: Path
     config: AgentConfig
     approval_mode: ApprovalMode
+    preset: AgentPreset
     pending: _PendingApproval | None = None
     task_handle: asyncio.Task[None] | None = None
     cancel_reason: str | None = None
@@ -139,6 +142,8 @@ class RunManager:
             max_context_tokens=request.max_context_tokens,
             max_total_tokens=request.max_total_tokens,
         )
+        preset = get_preset(request.preset)
+        config = preset.apply(config)
         run_id = uuid4().hex
         store = self._store_for_workspace(workspace)
         store.create_run(
@@ -146,13 +151,19 @@ class RunManager:
             source="web",
             task=request.task,
             model_name=self.model_name,
-            config=config.model_dump() | {"approval_mode": request.approval_mode.value},
+            config=config.model_dump()
+            | {
+                "approval_mode": request.approval_mode.value,
+                "preset": preset.name.value,
+                "tool_names": list(preset.tool_names),
+            },
         )
         record = _RunRecord(
             run_id=run_id,
             workspace=workspace,
             config=config,
             approval_mode=request.approval_mode,
+            preset=preset.name,
         )
         self._records[run_id] = record
         self._append_event(record, "run_queued", {"task": request.task})
@@ -178,15 +189,23 @@ class RunManager:
             max_context_tokens=request.max_context_tokens,
             max_total_tokens=request.max_total_tokens,
         )
+        preset = get_preset(request.preset)
+        config = preset.apply(config)
         store.update_config(
             run_id,
-            config.model_dump() | {"approval_mode": request.approval_mode.value},
+            config.model_dump()
+            | {
+                "approval_mode": request.approval_mode.value,
+                "preset": preset.name.value,
+                "tool_names": list(preset.tool_names),
+            },
         )
         record = _RunRecord(
             run_id=run_id,
             workspace=Path(stored.workspace),
             config=config,
             approval_mode=request.approval_mode,
+            preset=preset.name,
         )
         self._records[run_id] = record
         self._append_event(record, "run_resume_queued", {"max_steps": request.max_steps})
@@ -279,21 +298,21 @@ class RunManager:
             JsonlTraceSink(record.workspace / ".minicode" / "traces.jsonl"),
             store,
         )
-        runtime = AgentRuntime(
-            provider,
-            create_default_registry(
+        runtime = AgentHarness(
+            model=provider,
+            tools=create_default_registry(
                 record.workspace,
                 PermissionPolicy(
                     _WebApprover(self, record),
                     mode=record.approval_mode,
                 ),
                 self.shell,
+                allowed_tools=set(get_preset(record.preset).tool_names),
             ),
             config=record.config,
             trace=recorder,
             checkpoint=SqliteCheckpointStore(record.workspace / ".minicode" / "checkpoints.db"),
-            on_model_delta=recorder.on_model_delta,
-        )
+        ).build_runtime(on_model_delta=recorder.on_model_delta)
         try:
             if resume:
                 await runtime.resume(record.run_id)
@@ -414,6 +433,8 @@ class RunManager:
             source=run.source,
             mode=run.mode,
             approval_mode=run.approval_mode,
+            preset=run.preset,
+            tool_names=run.tool_names,
             task=run.task,
             workspace=run.workspace,
             model_name=run.model_name,

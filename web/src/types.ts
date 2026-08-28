@@ -10,12 +10,15 @@ export type Approval = {
 };
 
 export type ApprovalMode = "ask" | "auto" | "read_only";
+export type AgentPreset = "minimal" | "standard" | "review";
 
 export type Run = {
   run_id: string;
   source: "cli" | "web";
   mode: "task" | "chat";
   approval_mode: ApprovalMode;
+  preset: AgentPreset;
+  tool_names: string[];
   task: string;
   workspace: string;
   model_name: string;
@@ -61,6 +64,7 @@ export type CreateRunInput = {
   max_context_tokens: number;
   max_total_tokens: number;
   approval_mode: ApprovalMode;
+  preset: AgentPreset;
 };
 
 export type FileChange = {

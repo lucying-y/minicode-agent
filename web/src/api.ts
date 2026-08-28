@@ -37,6 +37,7 @@ export const api = {
         max_context_tokens: run.max_context_tokens,
         max_total_tokens: run.max_total_tokens,
         approval_mode: run.approval_mode,
+        preset: run.preset,
       }),
     }),
 };
