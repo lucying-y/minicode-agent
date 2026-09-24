@@ -1,4 +1,10 @@
-"""Execute commands with explicit POSIX or PowerShell semantics."""
+"""Execute commands with explicit POSIX or PowerShell semantics.
+
+The backend receives one command string but never delegates to the caller's
+implicit parent shell.  It starts a known interpreter, merges stdout/stderr,
+normalizes output to UTF-8, and returns bounded metadata that tools can expose
+to the model and the timeline.
+"""
 
 import asyncio
 import os
@@ -45,7 +51,12 @@ class CommandResult:
 
 
 class ShellBackend(ABC):
-    """Run commands in one explicit shell without an implicit parent shell."""
+    """Run commands in one explicit shell without an implicit parent shell.
+
+    Subclasses only define invocation syntax and human/model descriptions.  The
+    shared lifecycle handles timeout, cancellation, output decoding, and status
+    normalization so POSIX and Windows callers observe the same contract.
+    """
 
     def __init__(self, info: ShellInfo) -> None:
         self.info = info
@@ -73,6 +84,12 @@ class ShellBackend(ABC):
         max_chars: int,
         environment: dict[str, str] | None = None,
     ) -> CommandResult:
+        """Run a command and return bounded output or a timeout result.
+
+        `communicate()` is shielded from task cancellation while the process is
+        being terminated.  This prevents a cancelled coroutine from leaving a
+        child process running after the caller has already abandoned the run.
+        """
         process = await self._start(command, cwd, environment)
         communication = asyncio.create_task(process.communicate())
         try:
@@ -94,6 +111,8 @@ class ShellBackend(ABC):
             )
 
         content = output.decode("utf-8", errors="replace")
+        # Tool output is model input, so an unbounded command cannot be allowed
+        # to consume the entire context window or the Web Console response.
         truncated = len(content) > max_chars
         if truncated:
             content = content[:max_chars] + "\n<output truncated>"
@@ -110,6 +129,7 @@ class ShellBackend(ABC):
         cwd: Path,
         environment: dict[str, str] | None,
     ) -> asyncio.subprocess.Process:
+        """Create the interpreter process with platform-specific safeguards."""
         invocation = self.invocation(command)
         options: dict[str, object] = {
             "cwd": cwd,
@@ -117,6 +137,9 @@ class ShellBackend(ABC):
             "stderr": asyncio.subprocess.STDOUT,
         }
         if self.info.platform == "windows":
+            # Python subprocesses on Windows otherwise inherit a locale-dependent
+            # encoding.  These variables make Chinese and other UTF-8 output
+            # deterministic for PowerShell and child Python commands.
             resolved_environment = os.environ.copy() if environment is None else environment.copy()
             resolved_environment["PYTHONIOENCODING"] = "utf-8"
             resolved_environment["PYTHONUTF8"] = "1"
@@ -129,6 +152,7 @@ class ShellBackend(ABC):
         return await asyncio.create_subprocess_exec(*invocation, **options)
 
     async def _terminate_tree(self, process: asyncio.subprocess.Process) -> None:
+        """Terminate the whole process group/tree rather than only the shell."""
         if self.info.platform == "windows":
             await _terminate_windows_process_tree(process)
         else:
@@ -168,7 +192,12 @@ class PosixShellBackend(ShellBackend):
 
 
 class PowerShellBackend(ShellBackend):
-    """Execute commands with native PowerShell and deterministic UTF-8 output."""
+    """Execute commands with native PowerShell and deterministic UTF-8 output.
+
+    The wrapper preserves both native process exit codes and PowerShell's
+    ``$?`` status.  This prevents a failed `pytest`/`git` process from appearing
+    successful merely because PowerShell itself started correctly.
+    """
 
     @property
     def demo_command(self) -> str:
@@ -208,6 +237,7 @@ class PowerShellBackend(ShellBackend):
 
 
 async def _terminate_windows_process_tree(process: asyncio.subprocess.Process) -> None:
+    """Use taskkill when available so descendants do not outlive the shell."""
     taskkill = shutil.which("taskkill.exe") or shutil.which("taskkill")
     if taskkill is not None:
         terminator = await asyncio.create_subprocess_exec(
@@ -228,6 +258,7 @@ async def _terminate_windows_process_tree(process: asyncio.subprocess.Process) -
 
 
 def _probe_powershell_version(executable: str) -> str | None:
+    """Read a short PowerShell version string without failing shell detection."""
     try:
         result = subprocess.run(
             [
@@ -255,7 +286,12 @@ def detect_shell(
     platform_name: str | None = None,
     operating_system: str | None = None,
 ) -> ShellBackend:
-    """Detect PowerShell on Windows and an explicit POSIX shell elsewhere."""
+    """Detect PowerShell on Windows and an explicit POSIX shell elsewhere.
+
+    The optional arguments make detection testable without monkey-patching the
+    host platform.  Windows prefers PowerShell 7 (`pwsh`) and falls back to the
+    inbox Windows PowerShell executable.
+    """
     resolved_platform = platform_name or sys.platform
     resolved_os = operating_system or platform.system() or resolved_platform
     if resolved_platform == "win32":

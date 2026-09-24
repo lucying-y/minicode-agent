@@ -1,4 +1,11 @@
-"""Bounded and observable model-tool execution loop."""
+"""Bounded and observable model-tool execution loop.
+
+`AgentRuntime` is intentionally an orchestration component rather than an
+application entry point.  It knows how to advance a conversation, but it does
+not know whether a tool is a file editor, a shell command, or a Web API action.
+That separation lets the same loop run behind the CLI, Web Console, evaluator,
+and deterministic tests.
+"""
 
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -41,7 +48,13 @@ class ToolExecutor(Protocol):
 
 
 class AgentRuntime:
-    """Run a model and tool executor until completion or a configured limit."""
+    """Run a model and tool executor until completion or a configured limit.
+
+    A ``step`` means one model request, not one tool call.  A single response
+    may contain multiple tool calls; they are executed in order and the whole
+    batch must finish before a checkpoint is written.  This gives resume a
+    stable boundary and avoids replaying only half of a model response.
+    """
 
     def __init__(
         self,
@@ -63,6 +76,7 @@ class AgentRuntime:
         self._sequence = 0
 
     async def run(self, task: str, *, run_id: str | None = None) -> RunResult:
+        """Start a new task run with a fresh message history and usage counter."""
         run_id = run_id or uuid4().hex
         self._sequence = 0
         messages = [
@@ -93,7 +107,12 @@ class AgentRuntime:
         *,
         max_steps: int | None = None,
     ) -> RunResult:
-        """Append one user turn and keep the same messages, usage, and run identifier."""
+        """Append one user turn and keep the same messages, usage, and run identifier.
+
+        Interactive CLI sessions call this method repeatedly.  The checkpoint
+        supplies the previous history and trace sequence, so a later turn is
+        persisted as part of the same timeline instead of creating a new run.
+        """
         if not content.strip():
             raise ValueError("conversation message cannot be empty")
         checkpoint = self.checkpoint.load(run_id)
@@ -212,7 +231,12 @@ class AgentRuntime:
         return result
 
     async def resume(self, run_id: str) -> RunResult:
-        """Continue a non-completed run from its last consistent checkpoint."""
+        """Continue a non-completed run from its last consistent checkpoint.
+
+        Resume never reconstructs state from display-only deltas.  It loads the
+        durable checkpoint, emits a resume event, and enters the same bounded
+        loop used by a fresh run.
+        """
         checkpoint = self.checkpoint.load(run_id)
         if checkpoint is None:
             raise ValueError(f"checkpoint not found: {run_id}")
@@ -251,9 +275,13 @@ class AgentRuntime:
         start_step: int,
         step_limit: int | None = None,
     ) -> RunResult:
+        """Advance the state machine until a terminal condition is reached."""
         resolved_step_limit = step_limit or self.config.max_steps
         for step in range(start_step, resolved_step_limit + 1):
             try:
+                # Context trimming happens immediately before the request, so
+                # the model sees the newest tool results while the full history
+                # remains available for replay and checkpointing.
                 model_messages = self.context.prepare(messages)
                 response = await self._complete_model(run_id, step, model_messages)
             except Exception as exc:
@@ -307,6 +335,9 @@ class AgentRuntime:
                 )
 
             for call in response.tool_calls:
+                # Tool calls from one response are deliberately sequential.  A
+                # later call may depend on the result of an earlier call, and
+                # sequential execution keeps approval and audit ordering clear.
                 self._emit(
                     run_id,
                     "tool_requested",
@@ -364,12 +395,20 @@ class AgentRuntime:
         step: int,
         messages: list[Message],
     ) -> ModelResponse:
+        """Request one complete response, optionally forwarding text deltas.
+
+        The runtime only acts on the final assembled response.  Streaming is a
+        presentation optimization for callers; it must not expose partial JSON
+        arguments to the tool executor.
+        """
         if not getattr(self.model, "supports_streaming", False):
             return await self.model.complete(messages, self.tools.schemas())
 
         provider = cast(StreamingModelProvider, self.model)
         response: ModelResponse | None = None
         async for chunk in provider.stream_complete(messages, self.tools.schemas()):
+            # Deltas are intentionally sent to the UI callback only.  The
+            # final chunk carries the authoritative usage and tool calls.
             if chunk.delta and self.on_model_delta is not None:
                 self.on_model_delta(run_id, step, chunk.delta)
             if chunk.response is not None:

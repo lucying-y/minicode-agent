@@ -1,4 +1,8 @@
-"""Execution trace persistence."""
+"""Execution trace persistence.
+
+The exports distinguish append-only events, replay, run summaries, and
+resumable checkpoints while keeping their common public imports convenient.
+"""
 
 from minicode_agent.persistence.checkpoint import (
     CheckpointStore,

@@ -1,4 +1,10 @@
-"""Shared SQLite run history for CLI and Web Console timelines."""
+"""Shared SQLite run history for CLI and Web Console timelines.
+
+The Run Store is the cross-entry-point source of timeline facts.  It keeps a
+compact summary in `runs`, ordered event rows in `events`, and updates both in a
+single transaction.  This allows a Web Console to observe a CLI run without
+sharing its process, approval callback, or live task handle.
+"""
 
 import json
 import sqlite3
@@ -19,10 +25,12 @@ def _now() -> str:
 
 
 def _sqlite_text(value: Any) -> str:
+    """Normalize malformed surrogate text before passing it to SQLite."""
     return str(value).encode("utf-8", errors="replace").decode("utf-8")
 
 
 def _json_safe(value: Any) -> Any:
+    """Recursively make event payloads safe for JSON and SQLite UTF-8 storage."""
     if isinstance(value, str):
         return _sqlite_text(value)
     if isinstance(value, dict):
@@ -59,7 +67,12 @@ class StoredRun(BaseModel):
 
 
 class SqliteRunStore:
-    """Persist run summaries and ordered events inside one workspace."""
+    """Persist run summaries and ordered events inside one workspace.
+
+    The database path is intentionally workspace-local (`.minicode/runs.db`) so
+    CLI and Web naturally converge on the same timeline when pointed at the
+    same repository.  It is not a remote coordination service.
+    """
 
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace.expanduser().resolve()
@@ -68,6 +81,7 @@ class SqliteRunStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
+        """Open a configured connection for short, explicit transactions."""
         connection = sqlite3.connect(self.path, timeout=5.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")
@@ -76,6 +90,7 @@ class SqliteRunStore:
         return connection
 
     def _initialize(self) -> None:
+        """Create the summary/event schema and its update-order index if absent."""
         with self._connect() as connection:
             connection.executescript(
                 """
@@ -120,6 +135,7 @@ class SqliteRunStore:
         config: dict[str, Any],
         status: str = "queued",
     ) -> StoredRun:
+        """Insert a run summary idempotently and return the stored representation."""
         timestamp = _now()
         with self._connect() as connection:
             connection.execute(
@@ -184,6 +200,7 @@ class SqliteRunStore:
         runtime_sequence: int | None = None,
         timestamp: str | None = None,
     ) -> dict[str, Any]:
+        """Append one event and fold its effects into the run summary atomically."""
         event_timestamp = timestamp or _now()
         connection = self._connect()
         try:
@@ -193,6 +210,9 @@ class SqliteRunStore:
             ).fetchone()
             if row is None:
                 raise KeyError(f"run not found: {run_id}")
+            # `event_count` is used as the per-run durable ID while the Runtime
+            # sequence remains optional metadata.  The transaction serializes
+            # concurrent writers so two events cannot receive the same ID.
             event_id = int(row["event_count"]) + 1
             connection.execute(
                 """
@@ -226,6 +246,7 @@ class SqliteRunStore:
         }
 
     def list_events(self, run_id: str, *, after: int = 0) -> list[dict[str, Any]]:
+        """Return events after a durable ID, suitable for polling or SSE replay."""
         if self.get_run(run_id) is None:
             raise KeyError(f"run not found: {run_id}")
         with self._connect() as connection:
@@ -254,6 +275,7 @@ class SqliteRunStore:
         event_id: int,
         timestamp: str,
     ) -> None:
+        """Fold one event into summary columns without changing event history."""
         status: str | None = None
         if event_type in {
             "run_started",
@@ -364,7 +386,13 @@ class SqliteRunStore:
 
 
 class PersistentRunRecorder:
-    """Write durable Runtime events and batch transient model text deltas."""
+    """Write durable Runtime events and batch transient model text deltas.
+
+    Model text arrives much more frequently than semantic Runtime events.  The
+    recorder batches deltas by run and step, while flushing before every normal
+    event so the timeline never places a later event before text that preceded
+    it.
+    """
 
     def __init__(
         self,
@@ -385,6 +413,7 @@ class PersistentRunRecorder:
         self._last_flush = perf_counter()
 
     def record(self, event: TraceEvent) -> None:
+        """Persist a semantic event and derive test artifacts when applicable."""
         self.flush_model_delta()
         self.trace.record(event)
         self.store.append_event(
@@ -404,6 +433,7 @@ class PersistentRunRecorder:
                 )
 
     def on_model_delta(self, run_id: str, step: int, delta: str) -> None:
+        """Buffer a stream fragment and flush on size, time, run, or step changes."""
         if self._delta_run_id is not None and (
             self._delta_run_id != run_id or self._delta_step != step
         ):
@@ -419,6 +449,7 @@ class PersistentRunRecorder:
             self.flush_model_delta()
 
     def flush_model_delta(self) -> None:
+        """Write the buffered delta event, if any, and reset the batch state."""
         if self._delta_run_id is None or not self._delta_parts:
             return
         self.store.append_event(

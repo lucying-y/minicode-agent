@@ -1,4 +1,9 @@
-"""Typed messages exchanged by the runtime, models, and tools."""
+"""Typed messages exchanged by the runtime, models, and tools.
+
+These models form the narrow data contract between bundles.  Keeping them
+provider-neutral is what allows a Fake Provider, an OpenAI-compatible Provider,
+the CLI, and the Web Console to share the same Runtime implementation.
+"""
 
 from enum import StrEnum
 from typing import Any, Literal
@@ -67,7 +72,13 @@ class ToolResult(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """Limits and instructions for a single runtime instance."""
+    """Limits and instructions for a single runtime instance.
+
+    ``max_steps`` bounds model requests, ``max_total_tokens`` bounds reported
+    usage, and ``max_context_tokens`` bounds each individual request after
+    history trimming.  These are application-level limits, not a substitute for
+    provider-side quotas or operating-system security controls.
+    """
 
     system_prompt: str = (
         "You are a coding agent working inside one repository. "
@@ -103,7 +114,12 @@ class RunResult(BaseModel):
 
 
 class RunCheckpoint(BaseModel):
-    """Serializable state from the last consistent point in a run."""
+    """Serializable state from the last consistent point in a run.
+
+    The checkpoint contains enough information to continue or display a run,
+    but intentionally does not contain live processes or pending approvals.
+    Those belong to the entry-point manager and must be reconstructed explicitly.
+    """
 
     run_id: str
     task: str

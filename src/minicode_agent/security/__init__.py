@@ -1,4 +1,8 @@
-"""Application-level permission controls."""
+"""Application-level permission controls.
+
+This bundle combines approval policy with canonical workspace path validation;
+neither should be mistaken for an operating-system sandbox.
+"""
 
 from minicode_agent.security.policy import (
     ApprovalHandler,

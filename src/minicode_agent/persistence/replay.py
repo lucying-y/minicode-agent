@@ -1,4 +1,9 @@
-"""Project a Session Event Log back into a user-facing run state."""
+"""Project a Session Event Log back into a user-facing run state.
+
+Replay is a pure projection: it validates and folds events but never invokes a
+tool, model, or subprocess.  That makes it safe for Web refreshes, CLI history,
+and offline debugging even when the original process no longer exists.
+"""
 
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -22,7 +27,12 @@ class ReplayState(BaseModel):
 
 
 class SessionReplay:
-    """Rebuild conversation state from Run Store or trace-shaped event mappings."""
+    """Rebuild conversation state from Run Store or trace-shaped event mappings.
+
+    Events are processed in the order supplied by the caller.  Run Store already
+    returns them by durable event ID; callers reading raw traces should preserve
+    the same sequence ordering before projecting.
+    """
 
     _status_by_event = {
         "run_queued": "queued",
@@ -40,7 +50,12 @@ class SessionReplay:
 
     @classmethod
     def project(cls, events: Iterable[Mapping[str, Any]]) -> ReplayState:
-        """Project events in sequence order into a consistent replay state."""
+        """Project events in sequence order into a consistent replay state.
+
+        Usage is accumulated from model response events, while terminal events
+        replace it with their authoritative final counters.  This handles both
+        an in-progress timeline and a completed run without double counting.
+        """
         ordered = list(events)
         if not ordered:
             raise ValueError("cannot replay an empty session event log")

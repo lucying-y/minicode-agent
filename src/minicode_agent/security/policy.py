@@ -1,4 +1,10 @@
-"""Permission decisions for state-changing tools."""
+"""Permission decisions for state-changing tools.
+
+This module is an application-level policy layer.  It classifies tool calls and
+decides whether to ask an approver, allow automatically, or reject them.  It
+does not change the operating-system identity of the child process and is not a
+replacement for a container or virtual machine.
+"""
 
 from enum import StrEnum
 from typing import Protocol
@@ -35,7 +41,13 @@ class ApprovalHandler(Protocol):
 
 
 class PermissionPolicy:
-    """Allow reads and require approval for writes and commands."""
+    """Allow reads and control writes and commands with an approval mode.
+
+    The blocked-command check is intentionally conservative and pattern based.
+    It catches common destructive POSIX and PowerShell forms, but callers must
+    still treat shell execution as privileged user code and choose an appropriate
+    external sandbox for untrusted repositories.
+    """
 
     _blocked_command_fragments = (
         "rm -rf",
@@ -61,6 +73,7 @@ class PermissionPolicy:
 
     @classmethod
     def _blocked_command(cls, command: str) -> bool:
+        """Return whether a normalized command matches a high-risk pattern."""
         normalized = " ".join(command.casefold().split())
         if any(fragment in normalized for fragment in cls._blocked_command_fragments):
             return True
@@ -87,6 +100,7 @@ class PermissionPolicy:
         self.mode = mode
 
     async def authorize(self, call: ToolCall, permission: PermissionLevel) -> None:
+        """Apply risk checks and, when required, ask the configured approver."""
         if permission is PermissionLevel.READ:
             return
 

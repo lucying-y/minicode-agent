@@ -1,4 +1,9 @@
-"""Extension points around structured tool execution."""
+"""Extension points around structured tool execution.
+
+Hooks are intentionally surface-neutral.  They can feed a CLI recorder, a Web
+event stream, metrics, or an audit sink without making tools depend on any of
+those applications.
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -9,7 +14,11 @@ from minicode_agent.security import PermissionLevel
 
 
 class ToolHook(Protocol):
-    """Observe a tool call before authorization and after execution."""
+    """Observe a tool call before authorization and after execution.
+
+    A hook may transform the result in `after_execute`, but it should avoid
+    performing unrelated side effects that could make retries non-deterministic.
+    """
 
     async def before_execute(self, call: ToolCall, permission: PermissionLevel) -> None:
         """Run before argument validation and permission authorization."""

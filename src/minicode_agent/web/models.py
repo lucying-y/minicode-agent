@@ -1,4 +1,9 @@
-"""Schemas exposed by the Web Console API."""
+"""Schemas exposed by the Web Console API.
+
+These models are the HTTP boundary. They validate user input before it reaches
+``RunManager`` and describe the read-only views returned to the React Console.
+They intentionally contain no execution logic.
+"""
 
 from datetime import datetime
 from typing import Literal
@@ -10,7 +15,11 @@ from minicode_agent.security import ApprovalMode, PermissionLevel
 
 
 class CreateRunRequest(BaseModel):
-    """Configuration for one new repository task."""
+    """Configuration for one new repository task.
+
+    Limits are constrained at the API boundary so a browser cannot request an
+    unbounded Runtime simply by sending a large JSON value.
+    """
 
     task: str = Field(min_length=1, max_length=20_000)
     workspace: str = Field(min_length=1)

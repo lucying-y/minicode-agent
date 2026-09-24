@@ -1,4 +1,9 @@
-"""Default repository tool set."""
+"""Default repository tool set.
+
+This factory is the one place that maps a workspace and platform Shell backend
+to the built-in tool implementations.  Callers can pass `allowed_tools` to
+construct a Preset without duplicating registration logic.
+"""
 
 from collections.abc import Iterable
 from pathlib import Path
@@ -23,7 +28,11 @@ def create_default_registry(
     allowed_tools: set[str] | None = None,
     hooks: Iterable[ToolHook] = (),
 ) -> ToolRegistry:
-    """Create workspace tools, optionally limited to a named capability set."""
+    """Create workspace tools, optionally limited to a named capability set.
+
+    Unknown names fail fast.  A typo in a Preset should never silently produce a
+    weaker registry than the caller intended.
+    """
     registry = ToolRegistry(Workspace(root), policy, hooks=hooks)
     default_tools = (
         ReadFileTool(),

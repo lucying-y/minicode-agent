@@ -1,4 +1,9 @@
-"""Manage Web executions while reading shared CLI/Web timeline history."""
+"""Manage Web executions while reading shared CLI/Web timeline history.
+
+``RunManager`` owns process-local tasks and approval futures, while SQLite owns
+durable summaries/events. A browser refresh can replay history, but it cannot
+recreate a live approval callback that belonged to another process.
+"""
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
@@ -58,11 +63,14 @@ class _RunRecord:
 
 
 class _WebApprover:
+    """Bridge a Runtime approval request to an HTTP-resolvable Future."""
+
     def __init__(self, manager: "RunManager", record: _RunRecord) -> None:
         self.manager = manager
         self.record = record
 
     async def approve(self, call: ToolCall, permission: PermissionLevel) -> bool:
+        """Publish a pending approval and suspend Runtime until the API resolves it."""
         loop = asyncio.get_running_loop()
         pending = _PendingApproval(
             view=ApprovalView(
@@ -93,7 +101,12 @@ class _WebApprover:
 
 
 class RunManager:
-    """Execute Web runs and project workspace-local persisted history."""
+    """Execute Web runs and project workspace-local persisted history.
+
+    Active records are process-local handles. Every meaningful state change is
+    also appended to the workspace Run Store, allowing CLI-created runs to be
+    displayed read-only and Web-created runs to survive a UI reconnect.
+    """
 
     def __init__(
         self,
@@ -113,6 +126,7 @@ class RunManager:
         self._records: dict[str, _RunRecord] = {}
 
     def list_runs(self) -> list[RunView]:
+        """Merge known workspace stores and return runs newest first."""
         stored_runs = {
             run.run_id: run for store in self._stores.values() for run in store.list_runs()
         }
@@ -141,6 +155,7 @@ class RunManager:
         ]
 
     async def create_run(self, request: CreateRunRequest) -> RunView:
+        """Persist a queued Web run and schedule its background execution."""
         workspace = Workspace(Path(request.workspace)).root
         config = self._config(
             workspace,
@@ -177,6 +192,7 @@ class RunManager:
         return self.get_run(run_id)
 
     async def resume_run(self, run_id: str, request: ResumeRunRequest) -> RunView:
+        """Schedule a stopped Web run from its durable Runtime checkpoint."""
         store = self._find_store(run_id)
         stored = store.get_run(run_id)
         if stored is None:
@@ -219,6 +235,7 @@ class RunManager:
         return self.get_run(run_id)
 
     async def cancel_run(self, run_id: str) -> RunView:
+        """Cancel an active Web task and preserve its last consistent state."""
         store = self._find_store(run_id)
         stored = store.get_run(run_id)
         if stored is None:
@@ -255,6 +272,7 @@ class RunManager:
         return self.get_run(run_id)
 
     def resolve_approval(self, run_id: str, approval_id: str, approved: bool) -> RunView:
+        """Resolve the one approval Future currently held by a Web run."""
         stored = self._find_store(run_id).get_run(run_id)
         if stored is None:
             raise KeyError(f"run not found: {run_id}")
@@ -270,6 +288,7 @@ class RunManager:
         return self.get_run(run_id)
 
     async def subscribe(self, run_id: str, *, after: int = 0) -> AsyncIterator[dict]:
+        """Poll durable events and yield them in SSE-friendly order."""
         store = self._find_store(run_id)
         while True:
             events = store.list_events(run_id, after=after)
@@ -279,6 +298,7 @@ class RunManager:
             await asyncio.sleep(0.25)
 
     async def shutdown(self) -> None:
+        """Cancel active tasks during application shutdown and mark them cancelled."""
         active = [
             record
             for record in self._records.values()
@@ -296,6 +316,7 @@ class RunManager:
                 self._ensure_cancelled(record)
 
     async def _execute(self, record: _RunRecord, task: str, *, resume: bool) -> None:
+        """Build one Runtime, run it, and persist final artifacts for the Web view."""
         change_tracker = WorkspaceChangeTracker(record.workspace)
         self._append_event(record, "run_status", {"status": "running"})
         provider = self.provider_factory()
@@ -348,9 +369,11 @@ class RunManager:
             )
 
     def _append_event(self, record: _RunRecord, event_type: str, data: dict) -> None:
+        """Append a Web lifecycle event to the workspace-local Run Store."""
         self._store_for_workspace(record.workspace).append_event(record.run_id, event_type, data)
 
     def _ensure_cancelled(self, record: _RunRecord) -> None:
+        """Materialize a cancelled checkpoint/event when task cancellation interrupted Runtime."""
         store = self._store_for_workspace(record.workspace)
         stored = store.get_run(record.run_id)
         if stored is None or stored.status == RunStatus.CANCELLED.value:

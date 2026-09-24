@@ -1,4 +1,9 @@
-"""Resolve tool paths inside one repository boundary."""
+"""Resolve tool paths inside one repository boundary.
+
+All built-in file tools route user/model supplied paths through `Workspace`.
+The checks are performed after expansion and canonicalization so that relative
+paths, symlinks, and platform-specific spellings are handled consistently.
+"""
 
 import os
 from pathlib import Path, PureWindowsPath
@@ -9,7 +14,12 @@ _SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template"}
 
 
 def is_sensitive_path(path: Path) -> bool:
-    """Return whether a workspace-relative path commonly contains credentials."""
+    """Return whether a workspace-relative path commonly contains credentials.
+
+    The check is intentionally name based rather than content based.  It blocks
+    common credential locations such as `.ssh`, `.git`, and `.env`, while
+    allowing conventional example/template environment files.
+    """
     for part in path.parts:
         normalized = part.casefold()
         if normalized in _SENSITIVE_DIRECTORIES or normalized in _SENSITIVE_FILES:
@@ -31,12 +41,14 @@ _WINDOWS_RESERVED_NAMES = {
 
 
 def _validate_windows_input(path: str) -> None:
+    """Reject drive-relative Windows paths whose meaning depends on shell state."""
     parsed = PureWindowsPath(path)
     if parsed.drive and not parsed.root:
         raise WorkspaceViolation(f"drive-relative paths are blocked: {path}")
 
 
 def _validate_windows_relative_path(path: Path) -> None:
+    """Reject Windows device names and Alternate Data Stream syntax."""
     for part in path.parts:
         if ":" in part:
             raise WorkspaceViolation(f"Windows alternate data streams are blocked: {path}")
@@ -50,7 +62,12 @@ class WorkspaceViolation(ValueError):
 
 
 class Workspace:
-    """Canonical root used by all repository tools."""
+    """Canonical root used by all repository tools.
+
+    A `Workspace` stores one resolved directory and exposes only two operations:
+    resolve an external path safely and render a known path relative to that
+    directory.  It is a shared boundary object, not a filesystem sandbox.
+    """
 
     def __init__(self, root: Path) -> None:
         resolved = root.expanduser().resolve()
@@ -59,6 +76,7 @@ class Workspace:
         self.root = resolved
 
     def resolve(self, path: str, *, must_exist: bool = False) -> Path:
+        """Resolve a path and reject escape, sensitive, or invalid platform forms."""
         if os.name == "nt":
             _validate_windows_input(path)
         candidate = Path(path).expanduser()
@@ -79,4 +97,5 @@ class Workspace:
         return candidate
 
     def relative(self, path: Path) -> str:
+        """Return a stable POSIX-style path relative to the workspace root."""
         return path.relative_to(self.root).as_posix()

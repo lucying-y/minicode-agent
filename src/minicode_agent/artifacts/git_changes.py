@@ -1,4 +1,9 @@
-"""Capture task-scoped workspace changes without modifying the Git index."""
+"""Capture task-scoped workspace changes without modifying the Git index.
+
+The tracker compares file snapshots rather than running `git diff` so untracked
+files can be represented too.  It never stages, commits, or otherwise mutates
+the repository; the result is a read-only artifact for the timeline.
+"""
 
 import difflib
 import hashlib
@@ -48,7 +53,12 @@ class _Snapshot:
 
 
 class WorkspaceChangeTracker:
-    """Compare Git-visible files before and after a run, including untracked files."""
+    """Compare Git-visible files before and after a run, including untracked files.
+
+    Large and binary files retain only their digest and metadata.  That keeps
+    the Web Console responsive and avoids putting arbitrary binary data into a
+    JSON patch while still reporting that a file changed.
+    """
 
     def __init__(self, workspace: Path, *, max_file_bytes: int = 1_000_000) -> None:
         self.workspace = workspace.expanduser().resolve()
@@ -56,6 +66,7 @@ class WorkspaceChangeTracker:
         self._before = self._capture()
 
     def collect(self, *, reset: bool = False) -> WorkspaceChanges:
+        """Capture a second snapshot and compare it with the previous baseline."""
         after = self._capture()
         changes = self._compare(self._before, after)
         if reset:
@@ -63,6 +74,7 @@ class WorkspaceChangeTracker:
         return changes
 
     def _capture(self) -> _Snapshot:
+        """Read Git's tracked/untracked file list and snapshot safe file content."""
         try:
             result = subprocess.run(
                 ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -90,6 +102,7 @@ class WorkspaceChangeTracker:
         return _Snapshot(True, None, files)
 
     def _read_state(self, path: Path) -> _FileState:
+        """Hash one path and retain text only when it is small enough to diff."""
         if not path.exists() and not path.is_symlink():
             return _FileState(False, None, b"", False)
         try:
@@ -103,6 +116,7 @@ class WorkspaceChangeTracker:
 
     @staticmethod
     def _compare(before: _Snapshot, after: _Snapshot) -> WorkspaceChanges:
+        """Build structured changes and aggregate line counts from two snapshots."""
         if not before.available:
             return WorkspaceChanges(available=False, reason=before.reason)
         if not after.available:
@@ -139,6 +153,7 @@ class WorkspaceChangeTracker:
         old: _FileState,
         new: _FileState,
     ) -> FileChange:
+        """Create one file record, using a unified diff for retained text."""
         binary = old.binary or new.binary or old.content is None or new.content is None
         if binary:
             return FileChange(

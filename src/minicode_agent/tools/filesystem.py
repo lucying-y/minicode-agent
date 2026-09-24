@@ -1,4 +1,9 @@
-"""Workspace-scoped file inspection and editing tools."""
+"""Workspace-scoped file inspection and editing tools.
+
+The tools are deliberately narrower than a general filesystem API: every path
+is resolved through `Workspace`, noisy/generated directories are skipped during
+search, and all returned content is bounded before it becomes model context.
+"""
 
 import re
 from pathlib import Path
@@ -13,6 +18,7 @@ _IGNORED_PARTS = {".git", ".minicode", ".venv", "__pycache__", "node_modules"}
 
 
 def _is_ignored(path: Path) -> bool:
+    """Return whether recursive discovery should skip a generated/sensitive path."""
     return any(part in _IGNORED_PARTS for part in path.parts) or is_sensitive_path(path)
 
 
@@ -30,6 +36,7 @@ class ReadFileTool(Tool[ReadFileInput]):
     input_model = ReadFileInput
 
     async def run(self, data: ReadFileInput, workspace: Workspace) -> ToolResult:
+        """Read selected 1-based lines and add line numbers for model usability."""
         path = workspace.resolve(data.path, must_exist=True)
         if not path.is_file():
             raise ValueError(f"not a file: {data.path}")
@@ -64,6 +71,7 @@ class ListFilesTool(Tool[ListFilesInput]):
     input_model = ListFilesInput
 
     async def run(self, data: ListFilesInput, workspace: Workspace) -> ToolResult:
+        """List bounded, sorted file paths while excluding noisy directories."""
         directory = workspace.resolve(data.path, must_exist=True)
         if not directory.is_dir():
             raise ValueError(f"not a directory: {data.path}")
@@ -94,6 +102,7 @@ class SearchTextTool(Tool[SearchTextInput]):
     input_model = SearchTextInput
 
     async def run(self, data: SearchTextInput, workspace: Workspace) -> ToolResult:
+        """Search UTF-8 text files and stop as soon as the result cap is reached."""
         directory = workspace.resolve(data.path, must_exist=True)
         if not directory.is_dir():
             raise ValueError(f"not a directory: {data.path}")
@@ -136,6 +145,7 @@ class EditFileTool(Tool[EditFileInput]):
     input_model = EditFileInput
 
     async def run(self, data: EditFileInput, workspace: Workspace) -> ToolResult:
+        """Create a file or replace exactly one matching text block."""
         path = workspace.resolve(data.path)
         if not path.exists():
             if data.old_text:

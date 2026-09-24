@@ -1,4 +1,10 @@
-"""Composable capability bundle for the MiniCode agent runtime."""
+"""Composable capability bundle for the MiniCode agent runtime.
+
+The harness is the dependency-composition boundary: callers choose a model,
+tool executor, persistence sinks, and limits here, then receive a uniform
+`AgentRuntime`.  Keeping assembly outside the loop makes presets and test
+fixtures small without adding conditionals to the state machine.
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,7 +43,13 @@ class AgentHarness:
         *,
         on_model_delta: Callable[[str, int, str], None] | None = None,
     ) -> AgentRuntime:
-        """Build a runtime with this harness's capabilities."""
+        """Build a runtime with this harness's capabilities.
+
+        Optional sinks are replaced by no-op implementations rather than
+        leaving `None` checks inside the Runtime.  `on_model_delta` remains an
+        explicit callback because it is a transient UI concern, not durable
+        runtime state.
+        """
         return AgentRuntime(
             self.model,
             self.tools,

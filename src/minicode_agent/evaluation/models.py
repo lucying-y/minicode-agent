@@ -1,10 +1,20 @@
-"""Schemas for evaluation tasks and reports."""
+"""Schemas for evaluation tasks and reports.
+
+The models keep task definition, execution metrics, and verification evidence
+explicit. A model's natural-language answer is not treated as a passing signal;
+``verify_exit_code`` and ``passed`` come from the independent verifier.
+"""
 
 from pydantic import BaseModel, Field
 
 
 class EvalTask(BaseModel):
-    """One isolated repository task and its deterministic verifier."""
+    """One isolated repository task and its deterministic verifier.
+
+    ``files`` is the fixture copied into a new workspace before the Agent starts.
+    ``verify_command`` is executed after the run and must be trusted because it
+    is an executable part of the task suite.
+    """
 
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
     prompt: str = Field(min_length=1)
@@ -46,4 +56,3 @@ class EvalReport(BaseModel):
     passed_tasks: int
     success_rate: float
     results: list[EvalResult]
-

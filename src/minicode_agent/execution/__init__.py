@@ -1,4 +1,8 @@
-"""Platform-aware command execution used by tools and evaluations."""
+"""Platform-aware command execution used by tools and evaluations.
+
+Callers use the shared backend contract rather than branching on Windows or
+POSIX details themselves.
+"""
 
 from minicode_agent.execution.shell import (
     CommandResult,

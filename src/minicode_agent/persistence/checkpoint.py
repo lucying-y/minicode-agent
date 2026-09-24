@@ -1,4 +1,10 @@
-"""Checkpoint storage for interrupted and limited runs."""
+"""Checkpoint storage for interrupted and limited runs.
+
+Checkpoints are snapshots of the last state at which Runtime can safely resume.
+They are deliberately separate from the append-only event log: a snapshot is
+optimized for loading one run, while events are optimized for history and
+replay.
+"""
 
 import sqlite3
 from pathlib import Path
@@ -20,6 +26,8 @@ class CheckpointStore(Protocol):
 
 
 class NullCheckpointStore:
+    """No-op implementation for callers that only need one-shot execution."""
+
     def save(self, checkpoint: RunCheckpoint) -> None:
         del checkpoint
 
@@ -29,7 +37,13 @@ class NullCheckpointStore:
 
 
 class SqliteCheckpointStore:
-    """Store one JSON snapshot per run in SQLite."""
+    """Store one JSON snapshot per run in SQLite.
+
+    The primary key makes save idempotent: each completed Runtime boundary
+    replaces the previous snapshot, and a resume reads exactly one payload.
+    SQLite WAL mode allows the CLI and Web process to inspect the same workspace
+    database with less reader/writer contention.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -54,6 +68,7 @@ class SqliteCheckpointStore:
             )
 
     def save(self, checkpoint: RunCheckpoint) -> None:
+        """Atomically replace the latest snapshot for a run."""
         with self._connect() as connection:
             connection.execute(
                 """
@@ -67,6 +82,7 @@ class SqliteCheckpointStore:
             )
 
     def load(self, run_id: str) -> RunCheckpoint | None:
+        """Load and validate one snapshot, returning `None` when absent."""
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM checkpoints WHERE run_id = ?",

@@ -1,4 +1,11 @@
-"""OpenAI-compatible chat-completions provider."""
+"""OpenAI-compatible chat-completions provider.
+
+This adapter intentionally targets the common Chat Completions subset rather
+than claiming compatibility with every vendor extension.  It converts between
+the provider-neutral runtime models and JSON/SSE payloads, validates response
+shapes, and leaves loop, permission, and persistence decisions to other
+bundles.
+"""
 
 import json
 from collections.abc import AsyncIterator
@@ -21,7 +28,12 @@ class ModelProviderError(RuntimeError):
 
 
 class OpenAICompatibleProvider:
-    """Call an OpenAI-compatible `/chat/completions` endpoint."""
+    """Call an OpenAI-compatible `/chat/completions` endpoint.
+
+    The HTTP client can be injected for tests.  When the client is created by
+    this class, `aclose()` owns its lifecycle; injected clients remain owned by
+    the caller.
+    """
 
     supports_streaming = True
 
@@ -45,6 +57,7 @@ class OpenAICompatibleProvider:
         messages: list[Message],
         tools: list[ToolSchema],
     ) -> ModelResponse:
+        """Send one non-streaming request and validate its response shape."""
         try:
             response = await self.client.post(
                 f"{self.base_url}/chat/completions",
@@ -63,7 +76,14 @@ class OpenAICompatibleProvider:
         messages: list[Message],
         tools: list[ToolSchema],
     ) -> AsyncIterator[ModelStreamChunk]:
-        """Parse OpenAI-compatible SSE chunks and assemble one final response."""
+        """Parse OpenAI-compatible SSE chunks and assemble one final response.
+
+        Text deltas are yielded as they arrive.  Tool calls are accumulated by
+        their provider-supplied index because an SSE stream may split the ID,
+        function name, and JSON arguments across different chunks.  Execution
+        is deferred until `_assemble_tool_calls()` has validated the complete
+        JSON object.
+        """
         payload = self._request_payload(messages, tools)
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}
@@ -164,6 +184,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _update_stream_usage(usage: TokenUsage, raw_usage: Any) -> None:
+        """Copy usage counters from a provider chunk when the vendor supplies them."""
         if raw_usage is None:
             return
         if not isinstance(raw_usage, dict):
@@ -176,6 +197,7 @@ class OpenAICompatibleProvider:
         tool_parts: dict[int, dict[str, str]],
         raw_calls: Any,
     ) -> None:
+        """Merge fragmented tool-call metadata keyed by the chunk index."""
         if raw_calls is None:
             return
         if not isinstance(raw_calls, list):
@@ -209,6 +231,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _assemble_tool_calls(tool_parts: dict[int, dict[str, str]]) -> list[ToolCall]:
+        """Validate accumulated fragments and convert them to `ToolCall` objects."""
         calls: list[ToolCall] = []
         for index in sorted(tool_parts):
             part = tool_parts[index]
@@ -231,6 +254,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _message_payload(message: Message) -> dict[str, Any]:
+        """Serialize one runtime message into Chat Completions message JSON."""
         payload: dict[str, Any] = {"role": message.role, "content": message.content}
         if message.name:
             payload["name"] = message.name
@@ -263,6 +287,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _parse_response(body: dict[str, Any]) -> ModelResponse:
+        """Parse a non-streaming response and reject malformed tool arguments."""
         try:
             message = body["choices"][0]["message"]
             calls = []

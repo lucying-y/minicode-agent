@@ -1,4 +1,8 @@
-"""Model provider interfaces and implementations."""
+"""Model provider interfaces and implementations.
+
+This surface contains both the real OpenAI-compatible adapter and the
+deterministic Fake Provider used by tests and demos.
+"""
 
 from minicode_agent.models.base import ModelProvider, StreamingModelProvider
 from minicode_agent.models.fake import FakeModelProvider

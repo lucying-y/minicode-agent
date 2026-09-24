@@ -1,4 +1,9 @@
-"""Named capability presets for common coding-agent tasks."""
+"""Named capability presets for common coding-agent tasks.
+
+A preset controls the model-visible tool set and, where appropriate, tightens
+the context budget.  It does not decide whether a write or shell call is
+approved; that is the separate `PermissionPolicy` concern.
+"""
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -16,7 +21,12 @@ class AgentPreset(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PresetDefinition:
-    """Static capability and limit choices attached to one preset."""
+    """Static capability and limit choices attached to one preset.
+
+    `tool_names` is consumed by registry construction.  Keeping the list in a
+    data object makes the same capability contract available to CLI help, Web
+    forms, persistence, and the Runtime.
+    """
 
     name: AgentPreset
     description: str

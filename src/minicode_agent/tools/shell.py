@@ -1,4 +1,9 @@
-"""Bounded shell command tool."""
+"""Bounded shell command tool.
+
+The tool delegates platform details to `ShellBackend`; its own responsibility is
+to validate command limits and translate the backend result into a structured
+`ToolResult` with exit code, timeout, truncation, and shell metadata.
+"""
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +29,7 @@ class RunShellTool(Tool[RunShellInput]):
         self.description = self.shell.tool_description
 
     async def run(self, data: RunShellInput, workspace: Workspace) -> ToolResult:
+        """Run one command from the workspace and preserve execution metadata."""
         result = await self.shell.run(
             data.command,
             cwd=workspace.root,
