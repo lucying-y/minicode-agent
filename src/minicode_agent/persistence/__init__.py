@@ -1,7 +1,7 @@
-"""Execution trace persistence.
+"""执行轨迹持久化。
 
-The exports distinguish append-only events, replay, run summaries, and
-resumable checkpoints while keeping their common public imports convenient.
+这里的导出接口区分追加式事件、Replay、运行摘要和可恢复 Checkpoint，同时保持公共导入路径
+简洁统一。
 """
 
 from minicode_agent.persistence.checkpoint import (

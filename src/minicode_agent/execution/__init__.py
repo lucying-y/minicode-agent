@@ -1,7 +1,6 @@
-"""Platform-aware command execution used by tools and evaluations.
+"""供工具和评测使用的跨平台命令执行能力。
 
-Callers use the shared backend contract rather than branching on Windows or
-POSIX details themselves.
+调用方使用统一的后端契约，无需自行根据 Windows 或 POSIX 的细节编写分支。
 """
 
 from minicode_agent.execution.shell import (

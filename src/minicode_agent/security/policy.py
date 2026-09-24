@@ -1,9 +1,7 @@
-"""Permission decisions for state-changing tools.
+"""针对有状态变更的工具调用做权限决策。
 
-This module is an application-level policy layer.  It classifies tool calls and
-decides whether to ask an approver, allow automatically, or reject them.  It
-does not change the operating-system identity of the child process and is not a
-replacement for a container or virtual machine.
+本模块是应用层策略：对工具调用分类，并决定是否请求审批、自动放行或拒绝。它不会改变子
+进程的操作系统身份，也不能替代容器或虚拟机。
 """
 
 from enum import StrEnum
@@ -41,12 +39,11 @@ class ApprovalHandler(Protocol):
 
 
 class PermissionPolicy:
-    """Allow reads and control writes and commands with an approval mode.
+    """允许读取，并通过审批模式控制写入和命令执行。
 
-    The blocked-command check is intentionally conservative and pattern based.
-    It catches common destructive POSIX and PowerShell forms, but callers must
-    still treat shell execution as privileged user code and choose an appropriate
-    external sandbox for untrusted repositories.
+    高风险命令检查有意采取保守的模式匹配策略，可以拦截常见的 POSIX 和 PowerShell 破坏性
+    命令形式。调用方仍必须把 Shell 执行视作具有当前用户权限的代码，并为不可信仓库选择
+    合适的外部沙箱。
     """
 
     _blocked_command_fragments = (
@@ -73,7 +70,7 @@ class PermissionPolicy:
 
     @classmethod
     def _blocked_command(cls, command: str) -> bool:
-        """Return whether a normalized command matches a high-risk pattern."""
+        """判断规范化后的命令是否匹配高风险模式。"""
         normalized = " ".join(command.casefold().split())
         if any(fragment in normalized for fragment in cls._blocked_command_fragments):
             return True
@@ -100,7 +97,7 @@ class PermissionPolicy:
         self.mode = mode
 
     async def authorize(self, call: ToolCall, permission: PermissionLevel) -> None:
-        """Apply risk checks and, when required, ask the configured approver."""
+        """执行风险检查，并在需要时请求已配置的审批器。"""
         if permission is PermissionLevel.READ:
             return
 

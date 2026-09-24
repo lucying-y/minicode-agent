@@ -1,8 +1,7 @@
-"""FastAPI application for the local Web Console.
+"""本地 Web Console 的 FastAPI 应用。
 
-Routes are thin adapters: validate request models, delegate to ``RunManager``,
-translate domain exceptions into HTTP status codes, and stream the persisted
-event timeline as SSE. Runtime and persistence behavior stays in its own bundle.
+路由只是薄适配层：校验请求模型、委托给 ``RunManager``、将领域异常转换为 HTTP 状态码，
+并把持久化事件时间线作为 SSE 流输出。Runtime 和持久化逻辑仍保留在各自 bundle 中。
 """
 
 import json
@@ -26,10 +25,9 @@ from minicode_agent.web.models import (
 
 
 def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAPI:
-    """Create an API app around one process-local Run Manager.
+    """围绕一个进程内 RunManager 创建 API 应用。
 
-    The lifespan hook shuts down active tasks so a local server does not leave
-    model requests or shell children behind when it exits.
+    生命周期 Hook 会在本地服务退出时关闭活跃任务，避免留下模型请求或 Shell 子进程。
     """
 
     @asynccontextmanager
@@ -111,7 +109,7 @@ def create_app(manager: RunManager, *, static_dir: Path | None = None) -> FastAP
         run_id: str,
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     ) -> StreamingResponse:
-        """Return an SSE stream that can resume from the Last-Event-ID header."""
+        """返回一个可根据 Last-Event-ID 请求头继续的 SSE 流。"""
         try:
             after = int(last_event_id or 0)
             manager.get_run(run_id)

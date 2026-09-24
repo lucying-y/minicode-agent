@@ -1,8 +1,7 @@
-"""Schemas exposed by the Web Console API.
+"""Web Console API 暴露的数据 Schema。
 
-These models are the HTTP boundary. They validate user input before it reaches
-``RunManager`` and describe the read-only views returned to the React Console.
-They intentionally contain no execution logic.
+这些模型构成 HTTP 边界：在用户输入进入 ``RunManager`` 前完成校验，并描述返回给 React
+Console 的只读视图。它们有意不包含执行逻辑。
 """
 
 from datetime import datetime
@@ -15,10 +14,9 @@ from minicode_agent.security import ApprovalMode, PermissionLevel
 
 
 class CreateRunRequest(BaseModel):
-    """Configuration for one new repository task.
+    """一次新仓库任务的配置。
 
-    Limits are constrained at the API boundary so a browser cannot request an
-    unbounded Runtime simply by sending a large JSON value.
+    限制在 API 边界进行约束，避免浏览器仅通过发送很大的 JSON 数值就请求无界 Runtime。
     """
 
     task: str = Field(min_length=1, max_length=20_000)
@@ -31,7 +29,7 @@ class CreateRunRequest(BaseModel):
 
 
 class ResumeRunRequest(BaseModel):
-    """Limits applied when continuing a stopped run."""
+    """继续已停止运行时应用的限制。"""
 
     max_steps: int = Field(ge=1, le=100)
     max_context_tokens: int = Field(default=32_000, ge=128, le=1_000_000)
@@ -41,14 +39,14 @@ class ResumeRunRequest(BaseModel):
 
 
 class ApprovalDecision(BaseModel):
-    """Human response to one pending tool request."""
+    """用户对一个待处理工具请求的响应。"""
 
     approval_id: str
     approved: bool
 
 
 class ApprovalView(BaseModel):
-    """Pending tool approval shown in the Console."""
+    """Console 中展示的待处理工具审批。"""
 
     approval_id: str
     call: ToolCall
@@ -57,7 +55,7 @@ class ApprovalView(BaseModel):
 
 
 class RunView(BaseModel):
-    """Current user-facing state of a managed run."""
+    """面向用户展示的托管运行当前状态。"""
 
     run_id: str
     source: Literal["cli", "web"]
@@ -84,7 +82,7 @@ class RunView(BaseModel):
 
 
 class HealthView(BaseModel):
-    """Small readiness response used by the frontend."""
+    """供前端使用的小型就绪状态响应。"""
 
     status: Literal["ok"] = "ok"
     model: str

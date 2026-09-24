@@ -1,8 +1,7 @@
-"""Typed messages exchanged by the runtime, models, and tools.
+"""Runtime、模型和工具之间交换的类型化消息。
 
-These models form the narrow data contract between bundles.  Keeping them
-provider-neutral is what allows a Fake Provider, an OpenAI-compatible Provider,
-the CLI, and the Web Console to share the same Runtime implementation.
+这些模型构成 bundle 之间的窄数据契约。保持它们与 Provider 无关，才能让 Fake Provider、
+OpenAI-compatible Provider、CLI 和 Web Console 共享同一个 Runtime 实现。
 """
 
 from enum import StrEnum
@@ -72,12 +71,11 @@ class ToolResult(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """Limits and instructions for a single runtime instance.
+    """单个 Runtime 实例的限制和指令。
 
-    ``max_steps`` bounds model requests, ``max_total_tokens`` bounds reported
-    usage, and ``max_context_tokens`` bounds each individual request after
-    history trimming.  These are application-level limits, not a substitute for
-    provider-side quotas or operating-system security controls.
+    ``max_steps`` 限制模型请求次数，``max_total_tokens`` 限制报告的用量，``max_context_tokens``
+    限制历史裁剪后单次请求的上下文大小。这些是应用层限制，不能替代 Provider 配额或操作
+    系统安全控制。
     """
 
     system_prompt: str = (
@@ -114,11 +112,10 @@ class RunResult(BaseModel):
 
 
 class RunCheckpoint(BaseModel):
-    """Serializable state from the last consistent point in a run.
+    """运行最近一致点的可序列化状态。
 
-    The checkpoint contains enough information to continue or display a run,
-    but intentionally does not contain live processes or pending approvals.
-    Those belong to the entry-point manager and must be reconstructed explicitly.
+    Checkpoint 包含继续或展示运行所需的信息，但有意不包含活动进程或待处理审批。这些对象
+    属于入口管理器，必须由它们显式重建。
     """
 
     run_id: str

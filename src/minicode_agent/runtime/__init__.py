@@ -1,4 +1,4 @@
-"""Agent runtime public API."""
+"""Agent Runtime 公共 API。"""
 
 from typing import TYPE_CHECKING, Any
 

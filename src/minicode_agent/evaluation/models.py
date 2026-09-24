@@ -1,19 +1,17 @@
-"""Schemas for evaluation tasks and reports.
+"""评测任务和报告的数据 Schema。
 
-The models keep task definition, execution metrics, and verification evidence
-explicit. A model's natural-language answer is not treated as a passing signal;
-``verify_exit_code`` and ``passed`` come from the independent verifier.
+这些模型显式保存任务定义、执行指标和验证证据。模型的自然语言回答不作为通过依据；
+``verify_exit_code`` 和 ``passed`` 来自独立校验器。
 """
 
 from pydantic import BaseModel, Field
 
 
 class EvalTask(BaseModel):
-    """One isolated repository task and its deterministic verifier.
+    """一个隔离的仓库任务及其确定性校验器。
 
-    ``files`` is the fixture copied into a new workspace before the Agent starts.
-    ``verify_command`` is executed after the run and must be trusted because it
-    is an executable part of the task suite.
+    ``files`` 是 Agent 启动前写入新工作区的 fixture。``verify_command`` 会在任务结束后
+    执行；由于它是任务集中的可执行部分，因此其来源必须可信。
     """
 
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")

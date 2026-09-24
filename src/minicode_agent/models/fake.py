@@ -1,8 +1,7 @@
-"""Deterministic model provider for tests and local demos.
+"""供测试和本地演示使用的确定性模型 Provider。
 
-The fake provider is intentionally strict: every request consumes exactly one
-scripted response.  A missing response fails loudly, which catches accidental
-extra Runtime steps instead of silently producing a misleading successful test.
+Fake Provider 有意采用严格行为：每个请求恰好消费一个预设响应。响应不足时会明确失败，
+从而发现意外增加的 Runtime 步骤，而不是静默产生具有误导性的成功测试。
 """
 
 import asyncio
@@ -13,11 +12,10 @@ from minicode_agent.runtime.types import Message, ModelResponse, ModelStreamChun
 
 
 class FakeModelProvider:
-    """Return scripted responses and record every request.
+    """返回预设响应并记录每次请求。
 
-    With ``streaming=True`` the same response is split into text deltas and a
-    final assembled response, allowing tests to cover the real Runtime
-    streaming path without network access.
+    当 ``streaming=True`` 时，同一个响应会拆分为文本增量和最终完整响应，使测试无需网络
+    即可覆盖真实的 Runtime 流式路径。
     """
 
     def __init__(
@@ -49,7 +47,7 @@ class FakeModelProvider:
         messages: list[Message],
         tools: list[ToolSchema],
     ) -> AsyncIterator[ModelStreamChunk]:
-        """Yield deterministic chunks and finish with the original response."""
+        """依次产生确定性分片，最后返回原始完整响应。"""
         self.requests.append((list(messages), list(tools)))
         if not self._responses:
             raise RuntimeError("FakeModelProvider has no scripted response left")

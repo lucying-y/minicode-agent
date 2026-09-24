@@ -1,7 +1,6 @@
-"""Repeatable repository-task evaluation.
+"""可重复执行的仓库任务评测。
 
-The exports cover task schemas, the sequential runner, and machine-readable
-reports used for local model comparisons.
+这里导出的接口包括任务 Schema、顺序执行器，以及用于本地模型对比的机器可读报告。
 """
 
 from minicode_agent.evaluation.models import EvalReport, EvalResult, EvalTask, EvalTaskSuite

@@ -1,9 +1,7 @@
-"""Checkpoint storage for interrupted and limited runs.
+"""中断或受限运行的 Checkpoint 存储。
 
-Checkpoints are snapshots of the last state at which Runtime can safely resume.
-They are deliberately separate from the append-only event log: a snapshot is
-optimized for loading one run, while events are optimized for history and
-replay.
+Checkpoint 是 Runtime 可以安全恢复的最近状态快照。它与追加式事件日志有意分离：快照
+针对单次运行的快速加载，事件则针对历史记录和 Replay。
 """
 
 import sqlite3
@@ -26,7 +24,7 @@ class CheckpointStore(Protocol):
 
 
 class NullCheckpointStore:
-    """No-op implementation for callers that only need one-shot execution."""
+    """供只需要单次执行的调用方使用的空操作实现。"""
 
     def save(self, checkpoint: RunCheckpoint) -> None:
         del checkpoint
@@ -37,12 +35,10 @@ class NullCheckpointStore:
 
 
 class SqliteCheckpointStore:
-    """Store one JSON snapshot per run in SQLite.
+    """在 SQLite 中为每个运行保存一个 JSON 快照。
 
-    The primary key makes save idempotent: each completed Runtime boundary
-    replaces the previous snapshot, and a resume reads exactly one payload.
-    SQLite WAL mode allows the CLI and Web process to inspect the same workspace
-    database with less reader/writer contention.
+    主键使保存操作具备幂等性：每个完成的 Runtime 边界都会替换之前的快照，而恢复时只需
+    读取一个载荷。SQLite WAL 模式降低 CLI 与 Web 进程检查同一工作区数据库时的读写竞争。
     """
 
     def __init__(self, path: Path) -> None:
@@ -68,7 +64,7 @@ class SqliteCheckpointStore:
             )
 
     def save(self, checkpoint: RunCheckpoint) -> None:
-        """Atomically replace the latest snapshot for a run."""
+        """原子替换某次运行的最新快照。"""
         with self._connect() as connection:
             connection.execute(
                 """
@@ -82,7 +78,7 @@ class SqliteCheckpointStore:
             )
 
     def load(self, run_id: str) -> RunCheckpoint | None:
-        """Load and validate one snapshot, returning `None` when absent."""
+        """加载并校验一份快照；不存在时返回 `None`。"""
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM checkpoints WHERE run_id = ?",

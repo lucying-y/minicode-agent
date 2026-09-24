@@ -1,8 +1,7 @@
-"""Append-only JSONL execution traces.
+"""追加式 JSONL 执行轨迹。
 
-Trace is the low-level diagnostic stream emitted by Runtime.  It preserves
-ordered event payloads in a human-readable local file, while higher-level Run
-Store code adds queryable summaries and Replay reconstructs state from events.
+Trace 是 Runtime 产生的底层诊断流，会在可读的本地文件中保留有序事件载荷；更高层的
+Run Store 提供可查询摘要，Replay 则从事件重建状态。
 """
 
 import json
@@ -54,7 +53,7 @@ class TraceEvent(BaseModel):
 
 
 class TraceSink(Protocol):
-    """Minimal synchronous sink used by Runtime event emission."""
+    """Runtime 发出事件时使用的最小同步 Sink。"""
 
     def record(self, event: TraceEvent) -> None:
         """Persist an event before returning."""
@@ -67,11 +66,10 @@ class NullTraceSink:
 
 
 class JsonlTraceSink:
-    """Append each event as one JSON line.
+    """将每个事件追加为一行 JSON。
 
-    One event per line keeps the file streamable and recoverable after a process
-    interruption.  The sink does not rotate, redact, or encrypt data; callers
-    should treat trace files as potentially sensitive repository logs.
+    每行一个事件使文件便于流式读取，并能在进程中断后保留已写内容。Sink 不负责轮转、脱敏
+    或加密数据；调用方应把 trace 文件视为可能包含敏感信息的仓库日志。
     """
 
     def __init__(self, path: Path) -> None:

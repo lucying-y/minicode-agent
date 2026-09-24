@@ -1,8 +1,7 @@
-"""Extension points around structured tool execution.
+"""结构化工具执行过程中的扩展点。
 
-Hooks are intentionally surface-neutral.  They can feed a CLI recorder, a Web
-event stream, metrics, or an audit sink without making tools depend on any of
-those applications.
+Hook 有意不依赖特定界面。它们可以向 CLI Recorder、Web 事件流、指标或审计 Sink 提供数据，
+而无需让工具依赖这些应用。
 """
 
 from collections.abc import Callable
@@ -14,14 +13,13 @@ from minicode_agent.security import PermissionLevel
 
 
 class ToolHook(Protocol):
-    """Observe a tool call before authorization and after execution.
+    """在授权前和执行后观察工具调用。
 
-    A hook may transform the result in `after_execute`, but it should avoid
-    performing unrelated side effects that could make retries non-deterministic.
+    Hook 可以在 `after_execute` 中转换结果，但应避免执行无关副作用，以免重试行为变得不确定。
     """
 
     async def before_execute(self, call: ToolCall, permission: PermissionLevel) -> None:
-        """Run before argument validation and permission authorization."""
+        """在参数校验和权限授权之前执行。"""
         ...
 
     async def after_execute(
@@ -30,13 +28,13 @@ class ToolHook(Protocol):
         permission: PermissionLevel,
         result: ToolResult,
     ) -> ToolResult:
-        """Observe or transform the structured result."""
+        """观察或转换结构化结果。"""
         ...
 
 
 @dataclass(frozen=True, slots=True)
 class ToolAuditEvent:
-    """Surface-neutral audit record emitted around one tool call."""
+    """一次工具调用生命周期中产生的、与界面无关的审计记录。"""
 
     phase: Literal["requested", "completed"]
     call: ToolCall
@@ -45,7 +43,7 @@ class ToolAuditEvent:
 
 
 class AuditHook:
-    """Send structured tool lifecycle records to a caller-owned sink."""
+    """将结构化工具生命周期记录发送给调用方提供的 Sink。"""
 
     def __init__(self, sink: Callable[[ToolAuditEvent], None]) -> None:
         self.sink = sink

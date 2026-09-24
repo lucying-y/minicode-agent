@@ -1,10 +1,8 @@
-"""OpenAI-compatible chat-completions provider.
+"""OpenAI-compatible Chat Completions Provider。
 
-This adapter intentionally targets the common Chat Completions subset rather
-than claiming compatibility with every vendor extension.  It converts between
-the provider-neutral runtime models and JSON/SSE payloads, validates response
-shapes, and leaves loop, permission, and persistence decisions to other
-bundles.
+这个适配器有意只支持通用的 Chat Completions 子集，不声称兼容所有厂商扩展。它负责在
+Provider 无关的 Runtime 模型与 JSON/SSE 载荷之间转换并校验响应结构，循环、权限和持久化
+决策仍由其他 bundle 负责。
 """
 
 import json
@@ -28,11 +26,10 @@ class ModelProviderError(RuntimeError):
 
 
 class OpenAICompatibleProvider:
-    """Call an OpenAI-compatible `/chat/completions` endpoint.
+    """调用 OpenAI-compatible `/chat/completions` 端点。
 
-    The HTTP client can be injected for tests.  When the client is created by
-    this class, `aclose()` owns its lifecycle; injected clients remain owned by
-    the caller.
+    测试可以注入 HTTP 客户端。由本类创建客户端时，其生命周期归 `aclose()` 管理；注入的
+    客户端仍由调用方管理。
     """
 
     supports_streaming = True
@@ -57,7 +54,7 @@ class OpenAICompatibleProvider:
         messages: list[Message],
         tools: list[ToolSchema],
     ) -> ModelResponse:
-        """Send one non-streaming request and validate its response shape."""
+        """发送一次非流式请求并校验响应结构。"""
         try:
             response = await self.client.post(
                 f"{self.base_url}/chat/completions",
@@ -76,13 +73,11 @@ class OpenAICompatibleProvider:
         messages: list[Message],
         tools: list[ToolSchema],
     ) -> AsyncIterator[ModelStreamChunk]:
-        """Parse OpenAI-compatible SSE chunks and assemble one final response.
+        """解析 OpenAI-compatible SSE 分片并组装最终响应。
 
-        Text deltas are yielded as they arrive.  Tool calls are accumulated by
-        their provider-supplied index because an SSE stream may split the ID,
-        function name, and JSON arguments across different chunks.  Execution
-        is deferred until `_assemble_tool_calls()` has validated the complete
-        JSON object.
+        文本增量到达后立即向上游产出。工具调用按 Provider 提供的 index 累积，因为 SSE 流
+        可能把 ID、函数名和 JSON 参数拆分到不同分片。只有 `_assemble_tool_calls()` 校验完
+        整个 JSON 对象后，工具调用才允许进入执行阶段。
         """
         payload = self._request_payload(messages, tools)
         payload["stream"] = True
@@ -184,7 +179,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _update_stream_usage(usage: TokenUsage, raw_usage: Any) -> None:
-        """Copy usage counters from a provider chunk when the vendor supplies them."""
+        """当厂商返回用量信息时，从 Provider 分片复制 Token 计数。"""
         if raw_usage is None:
             return
         if not isinstance(raw_usage, dict):
@@ -197,7 +192,7 @@ class OpenAICompatibleProvider:
         tool_parts: dict[int, dict[str, str]],
         raw_calls: Any,
     ) -> None:
-        """Merge fragmented tool-call metadata keyed by the chunk index."""
+        """以分片 index 为键合并被拆开的工具调用元数据。"""
         if raw_calls is None:
             return
         if not isinstance(raw_calls, list):
@@ -231,7 +226,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _assemble_tool_calls(tool_parts: dict[int, dict[str, str]]) -> list[ToolCall]:
-        """Validate accumulated fragments and convert them to `ToolCall` objects."""
+        """校验累积的调用片段，并转换为 `ToolCall` 对象。"""
         calls: list[ToolCall] = []
         for index in sorted(tool_parts):
             part = tool_parts[index]
@@ -254,7 +249,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _message_payload(message: Message) -> dict[str, Any]:
-        """Serialize one runtime message into Chat Completions message JSON."""
+        """把一条 Runtime 消息序列化为 Chat Completions 消息 JSON。"""
         payload: dict[str, Any] = {"role": message.role, "content": message.content}
         if message.name:
             payload["name"] = message.name
@@ -287,7 +282,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _parse_response(body: dict[str, Any]) -> ModelResponse:
-        """Parse a non-streaming response and reject malformed tool arguments."""
+        """解析非流式响应，并拒绝结构不合法的工具参数。"""
         try:
             message = body["choices"][0]["message"]
             calls = []

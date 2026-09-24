@@ -1,10 +1,8 @@
-"""Bounded and observable model-tool execution loop.
+"""有界且可观测的模型-工具执行循环。
 
-`AgentRuntime` is intentionally an orchestration component rather than an
-application entry point.  It knows how to advance a conversation, but it does
-not know whether a tool is a file editor, a shell command, or a Web API action.
-That separation lets the same loop run behind the CLI, Web Console, evaluator,
-and deterministic tests.
+`AgentRuntime` 有意只作为编排组件，而不是应用入口。它负责推进对话，但不关心工具是文件
+编辑器、Shell 命令还是 Web API。这样的分离使同一套循环可以服务 CLI、Web Console、评测器
+和确定性测试。
 """
 
 from collections.abc import Callable
@@ -48,12 +46,11 @@ class ToolExecutor(Protocol):
 
 
 class AgentRuntime:
-    """Run a model and tool executor until completion or a configured limit.
+    """运行模型和工具执行器，直到完成或达到配置的限制。
 
-    A ``step`` means one model request, not one tool call.  A single response
-    may contain multiple tool calls; they are executed in order and the whole
-    batch must finish before a checkpoint is written.  This gives resume a
-    stable boundary and avoids replaying only half of a model response.
+    一个 ``step`` 表示一次模型请求，而不是一次工具调用。单个响应可能包含多个工具调用；
+    它们按顺序执行，整批完成后才写入 Checkpoint。这样可以提供稳定的恢复边界，避免只重放
+    半个模型响应。
     """
 
     def __init__(
@@ -76,7 +73,7 @@ class AgentRuntime:
         self._sequence = 0
 
     async def run(self, task: str, *, run_id: str | None = None) -> RunResult:
-        """Start a new task run with a fresh message history and usage counter."""
+        """使用全新的消息历史和用量计数启动一次任务运行。"""
         run_id = run_id or uuid4().hex
         self._sequence = 0
         messages = [
@@ -107,11 +104,10 @@ class AgentRuntime:
         *,
         max_steps: int | None = None,
     ) -> RunResult:
-        """Append one user turn and keep the same messages, usage, and run identifier.
+        """追加一轮用户消息，并保持消息、用量和 run ID 不变。
 
-        Interactive CLI sessions call this method repeatedly.  The checkpoint
-        supplies the previous history and trace sequence, so a later turn is
-        persisted as part of the same timeline instead of creating a new run.
+        交互式 CLI 会重复调用此方法。Checkpoint 提供之前的历史和 trace sequence，因此后续
+        对话会作为同一时间线的一部分持久化，而不是创建新的运行。
         """
         if not content.strip():
             raise ValueError("conversation message cannot be empty")
@@ -231,11 +227,10 @@ class AgentRuntime:
         return result
 
     async def resume(self, run_id: str) -> RunResult:
-        """Continue a non-completed run from its last consistent checkpoint.
+        """从最近的一致 Checkpoint 继续未完成的运行。
 
-        Resume never reconstructs state from display-only deltas.  It loads the
-        durable checkpoint, emits a resume event, and enters the same bounded
-        loop used by a fresh run.
+        Resume 不会从仅用于展示的增量文本重建状态，而是加载持久化 Checkpoint、发出恢复
+        事件，并进入与新运行相同的有界循环。
         """
         checkpoint = self.checkpoint.load(run_id)
         if checkpoint is None:
@@ -275,13 +270,12 @@ class AgentRuntime:
         start_step: int,
         step_limit: int | None = None,
     ) -> RunResult:
-        """Advance the state machine until a terminal condition is reached."""
+        """推进状态机，直到达到某个终态条件。"""
         resolved_step_limit = step_limit or self.config.max_steps
         for step in range(start_step, resolved_step_limit + 1):
             try:
-                # Context trimming happens immediately before the request, so
-                # the model sees the newest tool results while the full history
-                # remains available for replay and checkpointing.
+                # 在请求前最后一刻裁剪上下文，保证模型看到最新工具结果，同时完整历史仍可供
+                # Replay 和 Checkpoint 使用。
                 model_messages = self.context.prepare(messages)
                 response = await self._complete_model(run_id, step, model_messages)
             except Exception as exc:
@@ -335,9 +329,8 @@ class AgentRuntime:
                 )
 
             for call in response.tool_calls:
-                # Tool calls from one response are deliberately sequential.  A
-                # later call may depend on the result of an earlier call, and
-                # sequential execution keeps approval and audit ordering clear.
+                # 同一响应中的工具调用有意串行执行。后续调用可能依赖前一个结果，串行也能让
+                # 审批和审计顺序保持清晰。
                 self._emit(
                     run_id,
                     "tool_requested",
@@ -395,11 +388,10 @@ class AgentRuntime:
         step: int,
         messages: list[Message],
     ) -> ModelResponse:
-        """Request one complete response, optionally forwarding text deltas.
+        """请求一个完整响应，并按需转发文本增量。
 
-        The runtime only acts on the final assembled response.  Streaming is a
-        presentation optimization for callers; it must not expose partial JSON
-        arguments to the tool executor.
+        Runtime 只处理最终组装的响应。流式输出只是调用方的展示优化，不能把不完整的 JSON
+        参数暴露给工具执行器。
         """
         if not getattr(self.model, "supports_streaming", False):
             return await self.model.complete(messages, self.tools.schemas())
@@ -407,8 +399,7 @@ class AgentRuntime:
         provider = cast(StreamingModelProvider, self.model)
         response: ModelResponse | None = None
         async for chunk in provider.stream_complete(messages, self.tools.schemas()):
-            # Deltas are intentionally sent to the UI callback only.  The
-            # final chunk carries the authoritative usage and tool calls.
+            # 增量有意只发送给 UI 回调；最终分片才携带权威用量和工具调用。
             if chunk.delta and self.on_model_delta is not None:
                 self.on_model_delta(run_id, step, chunk.delta)
             if chunk.response is not None:

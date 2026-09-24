@@ -1,9 +1,7 @@
-"""Base class for structured tools.
+"""结构化工具的基类。
 
-Each tool exposes a Pydantic input model and a declared permission level.  The
-registry performs validation and authorization before calling `run()`, so tool
-implementations can focus on one operation and return a provider-neutral
-`ToolResult`.
+每个工具暴露一个 Pydantic 输入模型和声明的权限级别。Registry 会在调用 `run()` 前完成
+参数校验与授权，因此工具实现可以专注于单一操作，并返回与 Provider 无关的 `ToolResult`。
 """
 
 from abc import ABC, abstractmethod
@@ -15,11 +13,10 @@ from minicode_agent.security import PermissionLevel, Workspace
 
 
 class Tool[InputT: BaseModel](ABC):
-    """Validate input before performing one workspace operation.
+    """校验输入后执行单个工作区操作。
 
-    Tool classes are intentionally small.  They should not decide approval
-    policy or serialize events; those cross-cutting concerns belong to the
-    Registry and Hook layers.
+    工具类有意保持精简，不应决定审批策略或序列化事件；这些横切关注点属于 Registry 和
+    Hook 层。
     """
 
     name: str
@@ -29,5 +26,5 @@ class Tool[InputT: BaseModel](ABC):
 
     @abstractmethod
     async def run(self, data: InputT, workspace: Workspace) -> ToolResult:
-        """Execute a validated tool request."""
+        """执行已经通过校验的工具请求。"""
         raise NotImplementedError

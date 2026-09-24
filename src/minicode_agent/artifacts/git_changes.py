@@ -1,8 +1,7 @@
-"""Capture task-scoped workspace changes without modifying the Git index.
+"""捕获任务范围内的工作区变更，并且不修改 Git 暂存区。
 
-The tracker compares file snapshots rather than running `git diff` so untracked
-files can be represented too.  It never stages, commits, or otherwise mutates
-the repository; the result is a read-only artifact for the timeline.
+跟踪器通过比较文件快照而不是执行 `git diff`，因此也能表示未跟踪文件。它不会暂存、
+提交或以其他方式修改仓库，生成的结果仅作为时间线中的只读产物。
 """
 
 import difflib
@@ -53,11 +52,10 @@ class _Snapshot:
 
 
 class WorkspaceChangeTracker:
-    """Compare Git-visible files before and after a run, including untracked files.
+    """比较任务前后的 Git 可见文件，包括未跟踪文件。
 
-    Large and binary files retain only their digest and metadata.  That keeps
-    the Web Console responsive and avoids putting arbitrary binary data into a
-    JSON patch while still reporting that a file changed.
+    大文件和二进制文件只保留摘要及元数据。这样既能报告文件发生过变化，又能避免把任意
+    二进制内容写入 JSON 补丁，并保持 Web Console 的响应速度。
     """
 
     def __init__(self, workspace: Path, *, max_file_bytes: int = 1_000_000) -> None:
@@ -66,7 +64,7 @@ class WorkspaceChangeTracker:
         self._before = self._capture()
 
     def collect(self, *, reset: bool = False) -> WorkspaceChanges:
-        """Capture a second snapshot and compare it with the previous baseline."""
+        """捕获新快照并与上一次基线比较。"""
         after = self._capture()
         changes = self._compare(self._before, after)
         if reset:
@@ -74,7 +72,7 @@ class WorkspaceChangeTracker:
         return changes
 
     def _capture(self) -> _Snapshot:
-        """Read Git's tracked/untracked file list and snapshot safe file content."""
+        """读取 Git 已跟踪和未跟踪文件列表，并为可安全读取的内容生成快照。"""
         try:
             result = subprocess.run(
                 ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -102,7 +100,7 @@ class WorkspaceChangeTracker:
         return _Snapshot(True, None, files)
 
     def _read_state(self, path: Path) -> _FileState:
-        """Hash one path and retain text only when it is small enough to diff."""
+        """计算单个路径的摘要，仅在文本足够小时保留内容用于差异比较。"""
         if not path.exists() and not path.is_symlink():
             return _FileState(False, None, b"", False)
         try:
@@ -116,7 +114,7 @@ class WorkspaceChangeTracker:
 
     @staticmethod
     def _compare(before: _Snapshot, after: _Snapshot) -> WorkspaceChanges:
-        """Build structured changes and aggregate line counts from two snapshots."""
+        """根据两个快照生成结构化变更并汇总增删行数。"""
         if not before.available:
             return WorkspaceChanges(available=False, reason=before.reason)
         if not after.available:
@@ -153,7 +151,7 @@ class WorkspaceChangeTracker:
         old: _FileState,
         new: _FileState,
     ) -> FileChange:
-        """Create one file record, using a unified diff for retained text."""
+        """创建单个文件的变更记录，为保留的文本生成 unified diff。"""
         binary = old.binary or new.binary or old.content is None or new.content is None
         if binary:
             return FileChange(

@@ -1,8 +1,7 @@
-"""Workspace-scoped file inspection and editing tools.
+"""限定在工作区范围内的文件检查和编辑工具。
 
-The tools are deliberately narrower than a general filesystem API: every path
-is resolved through `Workspace`, noisy/generated directories are skipped during
-search, and all returned content is bounded before it becomes model context.
+这些工具有意比通用文件系统 API 更窄：所有路径都通过 `Workspace` 解析，搜索时跳过噪声
+和生成目录，返回内容也会在进入模型上下文前进行长度限制。
 """
 
 import re
@@ -18,7 +17,7 @@ _IGNORED_PARTS = {".git", ".minicode", ".venv", "__pycache__", "node_modules"}
 
 
 def _is_ignored(path: Path) -> bool:
-    """Return whether recursive discovery should skip a generated/sensitive path."""
+    """判断递归发现文件时是否应跳过生成目录或敏感路径。"""
     return any(part in _IGNORED_PARTS for part in path.parts) or is_sensitive_path(path)
 
 
@@ -36,7 +35,7 @@ class ReadFileTool(Tool[ReadFileInput]):
     input_model = ReadFileInput
 
     async def run(self, data: ReadFileInput, workspace: Workspace) -> ToolResult:
-        """Read selected 1-based lines and add line numbers for model usability."""
+        """读取指定的 1-based 行范围，并添加行号以便模型定位内容。"""
         path = workspace.resolve(data.path, must_exist=True)
         if not path.is_file():
             raise ValueError(f"not a file: {data.path}")
@@ -71,7 +70,7 @@ class ListFilesTool(Tool[ListFilesInput]):
     input_model = ListFilesInput
 
     async def run(self, data: ListFilesInput, workspace: Workspace) -> ToolResult:
-        """List bounded, sorted file paths while excluding noisy directories."""
+        """排除噪声目录，列出数量有界且经过排序的文件路径。"""
         directory = workspace.resolve(data.path, must_exist=True)
         if not directory.is_dir():
             raise ValueError(f"not a directory: {data.path}")
@@ -102,7 +101,7 @@ class SearchTextTool(Tool[SearchTextInput]):
     input_model = SearchTextInput
 
     async def run(self, data: SearchTextInput, workspace: Workspace) -> ToolResult:
-        """Search UTF-8 text files and stop as soon as the result cap is reached."""
+        """搜索 UTF-8 文本文件，并在达到结果数量上限时立即停止。"""
         directory = workspace.resolve(data.path, must_exist=True)
         if not directory.is_dir():
             raise ValueError(f"not a directory: {data.path}")
@@ -145,7 +144,7 @@ class EditFileTool(Tool[EditFileInput]):
     input_model = EditFileInput
 
     async def run(self, data: EditFileInput, workspace: Workspace) -> ToolResult:
-        """Create a file or replace exactly one matching text block."""
+        """创建文件，或替换且仅替换一个匹配的文本块。"""
         path = workspace.resolve(data.path)
         if not path.exists():
             if data.old_text:

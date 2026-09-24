@@ -1,9 +1,8 @@
-"""Command-line entry point for MiniCode Agent.
+"""MiniCode Agent 的命令行入口。
 
-The CLI is an adapter layer: it parses user intent, builds a Harness, and
-connects Runtime events to terminal output and the shared Run Store.  Business
-rules remain in the Runtime, Tools, Security, and Persistence bundles so the
-interactive CLI and Web Console do not drift apart.
+CLI 是一个适配层：负责解析用户意图、构建 Harness，并把 Runtime 事件连接到终端输出和
+共享 Run Store。业务规则仍位于 Runtime、Tools、Security 和 Persistence bundle 中，
+避免交互式 CLI 与 Web Console 的行为逐渐产生差异。
 """
 
 import argparse
@@ -54,10 +53,9 @@ from minicode_agent.tools import create_default_registry
 
 
 class ConsoleApprover:
-    """Ask before each write or shell operation.
+    """在每次写入或 Shell 操作前询问用户。
 
-    Input is read in a worker thread because the Runtime is asynchronous while
-    the native terminal prompt is blocking.
+    Runtime 使用异步执行，而原生终端输入是阻塞操作，因此输入需要放到工作线程中读取。
     """
 
     async def approve(self, call: ToolCall, permission: PermissionLevel) -> bool:
@@ -71,10 +69,10 @@ class ConsoleApprover:
 
 
 class RecordingApprover:
-    """Record surface-neutral approval events around another approver.
+    """在另一个审批器外层记录与界面无关的审批事件。
 
-    The delegate owns the actual decision; this wrapper only adds timeline facts
-    that make an approval visible to Web/CLI history and replay.
+    被代理对象负责实际决策；这个包装器只增加时间线事实，让审批过程能在 Web/CLI 历史和
+    Replay 中显示。
     """
 
     def __init__(self, delegate: ApprovalHandler, store: SqliteRunStore, run_id: str) -> None:
@@ -105,10 +103,9 @@ class RecordingApprover:
 
 
 class ConsoleDeltaWriter:
-    """Persist model deltas while displaying them once in an interactive terminal.
+    """持久化模型增量，同时在交互式终端中只显示一次。
 
-    Persistence and terminal rendering share the same callback so streamed text
-    cannot appear in the console while silently disappearing from the timeline.
+    持久化和终端渲染共用同一个回调，避免流式文本已经出现在控制台中，却没有进入时间线。
     """
 
     def __init__(self, recorder: PersistentRunRecorder) -> None:
@@ -139,7 +136,7 @@ class ConsoleDeltaWriter:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the top-level CLI parser and its task/chat/evaluation commands."""
+    """构建顶层 CLI 解析器以及任务、对话和评测命令。"""
     parser = argparse.ArgumentParser(prog="minicode", description="A small coding-agent runtime")
     subparsers = parser.add_subparsers(dest="command")
 
@@ -173,7 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_runtime_options(command: argparse.ArgumentParser) -> None:
-    """Attach options shared by one-shot, resume, and interactive commands."""
+    """添加单次任务、恢复和交互命令共用的 Runtime 选项。"""
     command.add_argument("--workspace", type=Path, default=Path.cwd())
     command.add_argument("--max-steps", type=int, default=12)
     command.add_argument("--max-context-tokens", type=int, default=32_000)
@@ -199,7 +196,7 @@ def _add_runtime_options(command: argparse.ArgumentParser) -> None:
 
 
 def _approval_mode(args: argparse.Namespace) -> ApprovalMode:
-    """Resolve the backwards-compatible `--yes` alias into an approval mode."""
+    """把向后兼容的 `--yes` 别名转换为审批模式。"""
     return ApprovalMode.AUTO if args.yes else ApprovalMode(args.approval_mode)
 
 
@@ -210,7 +207,7 @@ def _record_workspace_changes(
     *,
     reset: bool = False,
 ) -> None:
-    """Append a read-only before/after workspace artifact to the Run Store."""
+    """向 Run Store 追加只读的工作区前后差异产物。"""
     store.append_event(
         run_id,
         "workspace_changes",
@@ -238,7 +235,7 @@ def _agent_config(
     max_context_tokens: int = 32_000,
     max_total_tokens: int = 100_000,
 ) -> AgentConfig:
-    """Create bounded runtime configuration with platform instructions appended."""
+    """创建有界的 Runtime 配置，并附加当前平台的操作说明。"""
     config = AgentConfig(
         max_steps=max_steps,
         max_context_tokens=max_context_tokens,
@@ -256,7 +253,7 @@ def _agent_config(
 
 
 async def run_demo(workspace: Path) -> int:
-    """Run the deterministic offline demo and return a process exit code."""
+    """运行确定性的离线演示并返回进程退出码。"""
     workspace = Workspace(workspace).root
     shell = default_shell()
     task = "Inspect this repository and finish the deterministic demo."
@@ -299,7 +296,7 @@ async def run_demo(workspace: Path) -> int:
 
 
 def _load_model_configuration() -> tuple[str, str, str] | None:
-    """Load and validate the three environment variables used by the real provider."""
+    """加载并校验真实 Provider 使用的三个环境变量。"""
     load_dotenv(dotenv_path=Path.cwd() / ".env")
     api_key = os.getenv("MINICODE_API_KEY", "")
     base_url = os.getenv("MINICODE_BASE_URL", "").strip()
@@ -320,7 +317,7 @@ def _load_model_configuration() -> tuple[str, str, str] | None:
 
 
 async def run_model_command(args: argparse.Namespace) -> int:
-    """Run a one-shot task or resume a checkpoint through an OpenAI-compatible model."""
+    """通过 OpenAI-compatible 模型执行单次任务或恢复 Checkpoint。"""
     model_configuration = _load_model_configuration()
     if model_configuration is None:
         return 2
@@ -423,7 +420,7 @@ async def run_model_command(args: argparse.Namespace) -> int:
 
 
 def _print_chat_help() -> None:
-    """Print commands supported by the persistent interactive session."""
+    """输出持久化交互会话支持的命令。"""
     print(
         "Commands:\n"
         "  /help             Show this help\n"
@@ -452,11 +449,10 @@ def _normalize_chat_input(raw: str) -> str:
 
 
 async def run_chat_command(args: argparse.Namespace) -> int:
-    """Run a persistent, terminal-driven conversation in one workspace.
+    """在一个工作区中运行由终端驱动的持久化对话。
 
-    Each user turn reuses one Runtime checkpoint and run ID.  `/clear` closes
-    that session and creates a new one, while `/replay` projects the durable
-    event log without re-running the model or tools.
+    每轮用户对话都会复用同一个 Runtime Checkpoint 和 run ID。`/clear` 会关闭当前会话并
+    创建新会话；`/replay` 只投影持久化事件日志，不会重新运行模型或工具。
     """
     model_configuration = _load_model_configuration()
     if model_configuration is None:
@@ -489,7 +485,7 @@ async def run_chat_command(args: argparse.Namespace) -> int:
         ConsoleDeltaWriter,
         WorkspaceChangeTracker,
     ]:
-        """Create one idle session and wire its runtime to CLI persistence/output."""
+        """创建空闲会话，并把 Runtime 接入 CLI 持久化和输出。"""
         run_id = uuid4().hex
         stored_config = base_config.model_dump() | {
             "mode": "chat",
@@ -639,7 +635,7 @@ async def run_chat_command(args: argparse.Namespace) -> int:
 
 
 async def run_evaluation_command(args: argparse.Namespace) -> int:
-    """Run the configured evaluation suite against the real provider."""
+    """使用真实 Provider 运行已配置的评测任务集。"""
     model_configuration = _load_model_configuration()
     if model_configuration is None:
         return 2
@@ -682,7 +678,7 @@ async def run_evaluation_command(args: argparse.Namespace) -> int:
 
 
 async def run_web_command(args: argparse.Namespace) -> int:
-    """Start the local FastAPI/SSE Web Console with demo or real model provider."""
+    """使用演示或真实模型 Provider 启动本地 FastAPI/SSE Web Console。"""
     import uvicorn
 
     from minicode_agent.web import RunManager, create_app
@@ -752,7 +748,7 @@ async def run_web_command(args: argparse.Namespace) -> int:
 
 
 async def async_main(argv: list[str] | None = None) -> int:
-    """Dispatch parsed CLI arguments and translate missing shell errors."""
+    """分发解析后的 CLI 参数，并转换 Shell 不可用错误。"""
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
@@ -773,7 +769,7 @@ async def async_main(argv: list[str] | None = None) -> int:
 
 
 def main() -> None:
-    """Run the async CLI dispatcher and expose a conventional process exit code."""
+    """运行异步 CLI 分发器，并返回符合约定的进程退出码。"""
     try:
         exit_code = asyncio.run(async_main())
     except KeyboardInterrupt:

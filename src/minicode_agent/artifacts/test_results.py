@@ -1,9 +1,7 @@
-"""Derive structured test results from shell tool events.
+"""从 Shell 工具事件中提取结构化测试结果。
 
-The extractor is deliberately conservative: it only inspects `run_shell`
-events whose command resembles a known test runner.  It summarizes output for a
-timeline but does not decide whether a task is correct; the evaluation bundle
-uses an explicit verifier for that purpose.
+提取器采取保守策略：只检查命令与已知测试运行器相似的 `run_shell` 事件。它只为时间线
+汇总输出，不判断任务是否正确；是否通过由 evaluation bundle 中的显式校验器决定。
 """
 
 import re
@@ -78,7 +76,7 @@ def extract_test_result(event_data: dict[str, Any]) -> TestResult | None:
 
 
 def _parse_counts(output: str) -> dict[str, int]:
-    """Extract the largest recognizable count for each result label."""
+    """为每种可识别的结果标签提取最大的计数值。"""
     counts: dict[str, int] = {}
     for amount, label in re.findall(
         r"(?<![\w.])(\d+)\s+(passed|failed|skipped|errors?|xfailed|xpassed)\b",

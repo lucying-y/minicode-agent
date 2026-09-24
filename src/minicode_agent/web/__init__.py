@@ -1,7 +1,6 @@
-"""Web Console API and background run management.
+"""Web Console API 和后台运行管理。
 
-This is the Python backend bundle. The React/Vite frontend lives in the separate
-root-level ``web/`` directory.
+这是 Python 后端 bundle。React/Vite 前端位于仓库根目录下独立的 ``web/`` 目录。
 """
 
 from minicode_agent.web.app import create_app

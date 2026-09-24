@@ -1,9 +1,8 @@
-"""Shared SQLite run history for CLI and Web Console timelines.
+"""供 CLI 和 Web Console 时间线共享的 SQLite 运行历史。
 
-The Run Store is the cross-entry-point source of timeline facts.  It keeps a
-compact summary in `runs`, ordered event rows in `events`, and updates both in a
-single transaction.  This allows a Web Console to observe a CLI run without
-sharing its process, approval callback, or live task handle.
+Run Store 是不同入口共享的时间线事实源。它在 `runs` 中保存紧凑摘要，在 `events` 中保存
+有序事件行，并在一个事务中同时更新二者。因此 Web Console 无需共享 CLI 的进程、审批回调
+或实时任务句柄，也能观察 CLI 运行。
 """
 
 import json
@@ -25,12 +24,12 @@ def _now() -> str:
 
 
 def _sqlite_text(value: Any) -> str:
-    """Normalize malformed surrogate text before passing it to SQLite."""
+    """在写入 SQLite 前规范化包含非法 surrogate 的文本。"""
     return str(value).encode("utf-8", errors="replace").decode("utf-8")
 
 
 def _json_safe(value: Any) -> Any:
-    """Recursively make event payloads safe for JSON and SQLite UTF-8 storage."""
+    """递归处理事件载荷，使其适合 JSON 和 SQLite UTF-8 存储。"""
     if isinstance(value, str):
         return _sqlite_text(value)
     if isinstance(value, dict):
@@ -67,11 +66,10 @@ class StoredRun(BaseModel):
 
 
 class SqliteRunStore:
-    """Persist run summaries and ordered events inside one workspace.
+    """在一个工作区内持久化运行摘要和有序事件。
 
-    The database path is intentionally workspace-local (`.minicode/runs.db`) so
-    CLI and Web naturally converge on the same timeline when pointed at the
-    same repository.  It is not a remote coordination service.
+    数据库路径有意放在工作区内的 `.minicode/runs.db`，因此 CLI 和 Web 指向同一仓库时自然
+    共享时间线。它不是远程协调服务。
     """
 
     def __init__(self, workspace: Path) -> None:
@@ -81,7 +79,7 @@ class SqliteRunStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        """Open a configured connection for short, explicit transactions."""
+        """打开已配置的连接，用于短小且明确的事务。"""
         connection = sqlite3.connect(self.path, timeout=5.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")
@@ -90,7 +88,7 @@ class SqliteRunStore:
         return connection
 
     def _initialize(self) -> None:
-        """Create the summary/event schema and its update-order index if absent."""
+        """在不存在时创建摘要/事件 Schema 及按更新时间排序的索引。"""
         with self._connect() as connection:
             connection.executescript(
                 """
@@ -135,7 +133,7 @@ class SqliteRunStore:
         config: dict[str, Any],
         status: str = "queued",
     ) -> StoredRun:
-        """Insert a run summary idempotently and return the stored representation."""
+        """幂等地插入运行摘要，并返回数据库中的表示。"""
         timestamp = _now()
         with self._connect() as connection:
             connection.execute(
@@ -200,7 +198,7 @@ class SqliteRunStore:
         runtime_sequence: int | None = None,
         timestamp: str | None = None,
     ) -> dict[str, Any]:
-        """Append one event and fold its effects into the run summary atomically."""
+        """追加一个事件，并以原子方式将其影响折叠到运行摘要中。"""
         event_timestamp = timestamp or _now()
         connection = self._connect()
         try:
@@ -210,9 +208,8 @@ class SqliteRunStore:
             ).fetchone()
             if row is None:
                 raise KeyError(f"run not found: {run_id}")
-            # `event_count` is used as the per-run durable ID while the Runtime
-            # sequence remains optional metadata.  The transaction serializes
-            # concurrent writers so two events cannot receive the same ID.
+            # `event_count` 作为每次运行的持久化 ID，Runtime sequence 只作为可选元数据保留。
+            # 事务会串行化并发写入，避免两个事件获得相同的 ID。
             event_id = int(row["event_count"]) + 1
             connection.execute(
                 """
@@ -246,7 +243,7 @@ class SqliteRunStore:
         }
 
     def list_events(self, run_id: str, *, after: int = 0) -> list[dict[str, Any]]:
-        """Return events after a durable ID, suitable for polling or SSE replay."""
+        """返回持久化 ID 之后的事件，供轮询或 SSE Replay 使用。"""
         if self.get_run(run_id) is None:
             raise KeyError(f"run not found: {run_id}")
         with self._connect() as connection:
@@ -275,7 +272,7 @@ class SqliteRunStore:
         event_id: int,
         timestamp: str,
     ) -> None:
-        """Fold one event into summary columns without changing event history."""
+        """把一个事件折叠到摘要列中，但不改变事件历史。"""
         status: str | None = None
         if event_type in {
             "run_started",
@@ -386,12 +383,10 @@ class SqliteRunStore:
 
 
 class PersistentRunRecorder:
-    """Write durable Runtime events and batch transient model text deltas.
+    """写入持久化 Runtime 事件，并批量处理临时的模型文本增量。
 
-    Model text arrives much more frequently than semantic Runtime events.  The
-    recorder batches deltas by run and step, while flushing before every normal
-    event so the timeline never places a later event before text that preceded
-    it.
+    模型文本到达频率远高于语义 Runtime 事件。Recorder 按 run 和 step 批量处理增量，并在
+    每个普通事件前刷新，确保时间线不会把后发生的事件排在之前的文本前面。
     """
 
     def __init__(
@@ -413,7 +408,7 @@ class PersistentRunRecorder:
         self._last_flush = perf_counter()
 
     def record(self, event: TraceEvent) -> None:
-        """Persist a semantic event and derive test artifacts when applicable."""
+        """持久化语义事件，并在适用时派生测试产物。"""
         self.flush_model_delta()
         self.trace.record(event)
         self.store.append_event(
@@ -433,7 +428,7 @@ class PersistentRunRecorder:
                 )
 
     def on_model_delta(self, run_id: str, step: int, delta: str) -> None:
-        """Buffer a stream fragment and flush on size, time, run, or step changes."""
+        """缓存一个流式片段，并在大小、时间、run 或 step 变化时刷新。"""
         if self._delta_run_id is not None and (
             self._delta_run_id != run_id or self._delta_step != step
         ):
@@ -449,7 +444,7 @@ class PersistentRunRecorder:
             self.flush_model_delta()
 
     def flush_model_delta(self) -> None:
-        """Write the buffered delta event, if any, and reset the batch state."""
+        """写入缓存的增量事件（如果存在），并重置批处理状态。"""
         if self._delta_run_id is None or not self._delta_parts:
             return
         self.store.append_event(

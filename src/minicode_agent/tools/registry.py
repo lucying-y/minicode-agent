@@ -1,9 +1,7 @@
-"""Tool discovery, validation, authorization, and execution.
+"""工具发现、校验、授权和执行。
 
-`ToolRegistry` is the single gate between model-generated `ToolCall` data and
-side effects.  Keeping the order of validation, authorization, execution, and
-hooks here prevents individual tools from accidentally implementing different
-security or observability rules.
+`ToolRegistry` 是模型生成的 `ToolCall` 数据与副作用之间唯一的入口。在这里统一校验、授权、
+执行和 Hook 的顺序，可以避免不同工具意外采用不同的安全或可观测性规则。
 """
 
 from collections.abc import Iterable
@@ -19,11 +17,10 @@ from minicode_agent.tools.hooks import ToolHook
 
 
 class ToolRegistry:
-    """Runtime-facing executor for a set of named tools.
+    """面向 Runtime 的命名工具执行器。
 
-    A registry owns one `Workspace` and one policy.  Tool schemas are generated
-    from the registered Pydantic input models, so the model-visible contract and
-    the runtime validation contract cannot drift independently.
+    一个 Registry 拥有一个 `Workspace` 和一套策略。工具 Schema 由已注册工具的 Pydantic
+    输入模型生成，因此模型可见的契约与 Runtime 校验契约不会各自漂移。
     """
 
     def __init__(
@@ -38,17 +35,17 @@ class ToolRegistry:
         self._hooks: list[ToolHook] = list(hooks)
 
     def add_hook(self, hook: ToolHook) -> None:
-        """Register a hook applied to subsequent tool calls."""
+        """注册一个将应用于后续工具调用的 Hook。"""
         self._hooks.append(hook)
 
     def register(self, tool: Tool[Any]) -> None:
-        """Add a uniquely named tool to the model-visible registry."""
+        """向模型可见的 Registry 中添加一个名称唯一的工具。"""
         if tool.name in self._tools:
             raise ValueError(f"tool already registered: {tool.name}")
         self._tools[tool.name] = tool
 
     def schemas(self) -> list[ToolSchema]:
-        """Return JSON Schemas in registration order for the model request."""
+        """按注册顺序返回本次模型请求需要的 JSON Schema。"""
         return [
             ToolSchema(
                 name=tool.name,
@@ -59,12 +56,10 @@ class ToolRegistry:
         ]
 
     async def execute(self, call: ToolCall) -> ToolResult:
-        """Validate, authorize, execute, and audit one structured tool call.
+        """校验、授权、执行并审计一次结构化工具调用。
 
-        Errors are converted to `ToolResult` values so the Runtime can decide
-        whether to continue or stop according to `stop_on_tool_error`.  Hook
-        failures are also isolated from the tool itself and surfaced as an
-        error result rather than escaping without a timeline record.
+        异常会转换为 `ToolResult`，由 Runtime 根据 `stop_on_tool_error` 决定继续还是停止。
+        Hook 异常也会与工具实现隔离，并作为错误结果返回，而不是未留时间线记录就直接逸出。
         """
         started = perf_counter()
         execution_started: float | None = None
@@ -75,8 +70,7 @@ class ToolRegistry:
         try:
             for hook in self._hooks:
                 await hook.before_execute(call, tool.permission)
-            # Validation happens before authorization so an approver never sees
-            # an operation whose arguments do not satisfy the public schema.
+            # 先校验参数再请求审批，确保审批者看到的操作符合公开 Schema。
             data = tool.input_model.model_validate(call.arguments)
             await self.policy.authorize(call, tool.permission)
             execution_started = perf_counter()

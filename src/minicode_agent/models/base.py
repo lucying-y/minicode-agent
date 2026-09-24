@@ -1,9 +1,8 @@
-"""Interfaces implemented by model providers.
+"""模型 Provider 需要实现的接口。
 
-The Runtime speaks only these protocols.  A provider may use HTTP, a local
-model, or a scripted response as long as it returns the shared runtime models.
-The streaming protocol deliberately ends with one complete response so the
-caller never has to infer whether a partial tool-call JSON value is executable.
+Runtime 只依赖这些协议。Provider 可以使用 HTTP、本地模型或预设响应，只要返回共享的
+Runtime 数据模型即可。流式协议有意以一个完整响应结束，因此调用方不需要判断不完整的
+工具调用 JSON 是否可以执行。
 """
 
 from __future__ import annotations
@@ -16,11 +15,10 @@ if TYPE_CHECKING:
 
 
 class ModelProvider(Protocol):
-    """Translate runtime messages and tool schemas to a model API.
+    """在 Runtime 消息、工具 Schema 与模型 API 之间进行转换。
 
-    Implementations should raise a provider-specific exception for transport or
-    response-shape failures; the Runtime catches that failure and records a
-    terminal `model_error` event.
+    传输失败或响应结构异常时，实现应抛出 Provider 专用异常；Runtime 会捕获异常并记录终态
+    `model_error` 事件。
     """
 
     async def complete(
@@ -33,10 +31,9 @@ class ModelProvider(Protocol):
 
 
 class StreamingModelProvider(ModelProvider, Protocol):
-    """Optional provider capability for incremental model output.
+    """用于模型增量输出的可选 Provider 能力。
 
-    Text chunks are safe to display immediately.  Tool-call fragments and usage
-    are accumulated by the provider and exposed in the final chunk.
+    文本分片可以立即显示；工具调用片段和用量由 Provider 累积，并在最终分片中统一返回。
     """
 
     supports_streaming: bool

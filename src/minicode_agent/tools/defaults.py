@@ -1,8 +1,7 @@
-"""Default repository tool set.
+"""默认仓库工具集合。
 
-This factory is the one place that maps a workspace and platform Shell backend
-to the built-in tool implementations.  Callers can pass `allowed_tools` to
-construct a Preset without duplicating registration logic.
+这个工厂统一将工作区和平台 Shell 后端映射到内置工具实现。调用方可以传入 `allowed_tools`
+构建 Preset，而无需重复实现注册逻辑。
 """
 
 from collections.abc import Iterable
@@ -28,10 +27,9 @@ def create_default_registry(
     allowed_tools: set[str] | None = None,
     hooks: Iterable[ToolHook] = (),
 ) -> ToolRegistry:
-    """Create workspace tools, optionally limited to a named capability set.
+    """创建工作区工具，并可限制为指定的能力集合。
 
-    Unknown names fail fast.  A typo in a Preset should never silently produce a
-    weaker registry than the caller intended.
+遇到未知工具名时立即报错。Preset 中的拼写错误不应静默生成比预期更弱的 Registry。
     """
     registry = ToolRegistry(Workspace(root), policy, hooks=hooks)
     default_tools = (

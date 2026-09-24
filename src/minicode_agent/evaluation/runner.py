@@ -1,9 +1,7 @@
-"""Execute coding tasks in isolated evaluation directories.
+"""在隔离的评测目录中执行编码任务。
 
-The evaluator is intentionally outside the Runtime. It prepares fixtures,
-executes an Agent, runs an independent verifier, and writes a report. This
-separation prevents a model from declaring its own output correct and makes
-results comparable across providers.
+评测器有意放在 Runtime 之外。它负责准备 fixture、执行 Agent、运行独立校验器并写入报告。
+这种分离避免模型自行宣称结果正确，也使不同 Provider 的结果可以对比。
 """
 
 import json
@@ -22,10 +20,9 @@ from minicode_agent.tools import create_default_registry
 
 
 class EvaluationApprover:
-    """Approve operations inside a disposable evaluation workspace.
+    """批准一次性评测工作区中的操作。
 
-    Automatic approval is safe only when the task suite and output directory are
-    trusted and disposable.
+    只有任务集来源可信且输出目录可随时丢弃时，自动批准才符合这里的安全假设。
     """
 
     async def approve(self, call: ToolCall, permission: PermissionLevel) -> bool:
@@ -34,15 +31,14 @@ class EvaluationApprover:
 
 
 def load_task_suite(path: Path) -> EvalTaskSuite:
-    """Load and validate a UTF-8 JSON task suite from disk."""
+    """从磁盘加载并校验 UTF-8 JSON 任务集。"""
     return EvalTaskSuite.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 class EvaluationRunner:
-    """Run tasks sequentially and write a machine-readable report.
+    """顺序执行任务并写入机器可读报告。
 
-    Reports are rewritten after every task, preserving partial progress if a
-    later task fails.
+    每个任务完成后都会重新写入报告，从而在后续任务失败时保留已经完成的部分进度。
     """
 
     def __init__(
@@ -63,7 +59,7 @@ class EvaluationRunner:
         self.config = config or AgentConfig(max_steps=12)
 
     async def run(self) -> EvalReport:
-        """Evaluate the complete suite and return the final aggregate report."""
+        """执行完整任务集并返回最终汇总报告。"""
         started_at = datetime.now(UTC)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         results = []
@@ -74,7 +70,7 @@ class EvaluationRunner:
         return self._write_report(started_at, results)
 
     async def _run_task(self, task: EvalTask) -> EvalResult:
-        """Prepare one fixture, run the Agent, and execute its verifier."""
+        """准备单个 fixture、运行 Agent，并执行对应校验器。"""
         workspace_path = self.output_dir / task.id
         workspace_path.mkdir(parents=True, exist_ok=True)
         workspace = Workspace(workspace_path)
@@ -120,7 +116,7 @@ class EvaluationRunner:
 
     @staticmethod
     def _write_fixture(workspace: Workspace, task: EvalTask) -> None:
-        """Materialize relative task files inside the evaluator workspace."""
+        """在评测工作区中写入使用相对路径描述的任务文件。"""
         for relative_path, content in task.files.items():
             if Path(relative_path).is_absolute():
                 raise ValueError(f"evaluation fixture path must be relative: {relative_path}")
@@ -129,7 +125,7 @@ class EvaluationRunner:
             path.write_text(content, encoding="utf-8")
 
     async def _verify(self, workspace: Workspace, task: EvalTask) -> tuple[int | None, str]:
-        """Run the trusted verifier with coverage-specific environment noise removed."""
+        """移除覆盖率相关环境干扰后运行可信校验器。"""
         environment = os.environ.copy()
         for name in list(environment):
             if name.startswith("COV_CORE_") or name == "COVERAGE_PROCESS_START":
@@ -144,7 +140,7 @@ class EvaluationRunner:
         return result.exit_code, result.output
 
     def _write_report(self, started_at: datetime, results: list[EvalResult]) -> EvalReport:
-        """Serialize the current partial or final result set to ``report.json``."""
+        """把当前部分结果或最终结果序列化到 ``report.json``。"""
         passed = sum(result.passed for result in results)
         report = EvalReport(
             model=self.model_name,

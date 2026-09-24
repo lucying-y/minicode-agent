@@ -1,7 +1,6 @@
-"""Application-level permission controls.
+"""应用层权限控制。
 
-This bundle combines approval policy with canonical workspace path validation;
-neither should be mistaken for an operating-system sandbox.
+此 bundle 将审批策略与工作区规范路径校验组合在一起；二者都不能替代操作系统级沙箱。
 """
 
 from minicode_agent.security.policy import (

@@ -1,8 +1,7 @@
-"""Project a Session Event Log back into a user-facing run state.
+"""把 Session Event Log 投影回面向用户的运行状态。
 
-Replay is a pure projection: it validates and folds events but never invokes a
-tool, model, or subprocess.  That makes it safe for Web refreshes, CLI history,
-and offline debugging even when the original process no longer exists.
+Replay 是纯投影过程：只校验并折叠事件，不会调用工具、模型或子进程。因此即使原始进程
+已经退出，也能安全用于 Web 刷新、CLI 历史和离线调试。
 """
 
 from collections.abc import Iterable, Mapping
@@ -27,11 +26,10 @@ class ReplayState(BaseModel):
 
 
 class SessionReplay:
-    """Rebuild conversation state from Run Store or trace-shaped event mappings.
+    """从 Run Store 或 trace 形状的事件映射重建对话状态。
 
-    Events are processed in the order supplied by the caller.  Run Store already
-    returns them by durable event ID; callers reading raw traces should preserve
-    the same sequence ordering before projecting.
+    事件按照调用方提供的顺序处理。Run Store 已经按持久化事件 ID 返回事件；读取原始 trace
+    的调用方应在投影前保持相同的序列顺序。
     """
 
     _status_by_event = {
@@ -50,11 +48,10 @@ class SessionReplay:
 
     @classmethod
     def project(cls, events: Iterable[Mapping[str, Any]]) -> ReplayState:
-        """Project events in sequence order into a consistent replay state.
+        """按序列顺序把事件投影为一致的 Replay 状态。
 
-        Usage is accumulated from model response events, while terminal events
-        replace it with their authoritative final counters.  This handles both
-        an in-progress timeline and a completed run without double counting.
+        用量从模型响应事件中累加；终态事件则用最终权威计数替换它。这样既能处理运行中的
+        时间线，也能处理已完成运行，而不会重复计数。
         """
         ordered = list(events)
         if not ordered:

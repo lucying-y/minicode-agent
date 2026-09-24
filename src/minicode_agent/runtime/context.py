@@ -1,21 +1,18 @@
-"""Deterministic context budgeting for model requests.
+"""模型请求的确定性上下文预算。
 
-The runtime deliberately uses a provider-independent character estimate instead
-of importing a tokenizer for one particular model.  The estimate is only a
-budgeting guardrail; the provider remains responsible for its actual context
-window.  The important invariant here is that an assistant message containing
-tool calls is kept together with the following tool results.
+Runtime 有意使用与 Provider 无关的字符估算，而不是为某个模型引入专用 tokenizer。这个
+估算只是预算保护，实际上下文窗口仍由 Provider 负责。这里最重要的不变量是：包含工具调用
+的 assistant 消息必须与后续工具结果一起保留。
 """
 
 from minicode_agent.runtime.types import Message
 
 
 class ContextManager:
-    """Keep the task and newest complete assistant/tool turns within a token estimate.
+    """在 Token 估算范围内保留任务以及最新完整的 assistant/tool 轮次。
 
-    A conversation is trimmed from the oldest completed execution block first.
-    The initial system prompt, the original task, and the current user turn are
-    always preferred over older history because they define the active request.
+    对话会优先从最早完成的执行块开始裁剪。初始 system prompt、原始任务和当前用户轮次
+    定义了正在处理的请求，因此它们始终优先于更早的历史。
     """
 
     def __init__(self, max_tokens: int) -> None:
@@ -30,11 +27,10 @@ class ContextManager:
         return max(1, (characters + 3) // 4)
 
     def prepare(self, messages: list[Message]) -> list[Message]:
-        """Return the messages that fit the budget without mutating the caller list.
+        """返回适合预算且不修改调用方列表的消息。
 
-        The method treats every assistant message as the start of an execution
-        block.  Any following tool messages belong to that block, so a trim can
-        never leave a tool result whose `tool_call_id` has been removed.
+        方法将每条 assistant 消息视为执行块的开始，后续工具消息都属于该块。因此裁剪后
+        不会留下已经移除其 `tool_call_id` 的工具结果。
         """
         if len(messages) <= 2 or self.estimate_tokens(messages) <= self.max_tokens:
             return list(messages)
@@ -53,9 +49,8 @@ class ContextManager:
         kept: list[list[Message]] = []
 
         for block in reversed(blocks):
-            # Build the candidate in chronological order while considering the
-            # newest block first.  Once one older block does not fit, no still
-            # older block can fit without also removing a newer block.
+            # 在从最新块开始考虑时，仍按时间顺序构建候选消息。一旦某个更早的块放不下，更早
+            # 的块也不可能在保留更新块的前提下放入预算。
             ordered_kept = [message for existing in reversed(kept) for message in existing]
             candidate = base + block + ordered_kept + current_turn
             if self.estimate_tokens(candidate) > self.max_tokens:
@@ -65,9 +60,8 @@ class ContextManager:
         ordered = [message for block in reversed(kept) for message in block]
         omitted = len(messages) - len(base) - len(ordered) - len(current_turn)
         if omitted:
-            # The marker is useful to the model, but it is optional: keeping a
-            # valid conversation is more important than spending the last few
-            # budgeted tokens on explanatory metadata.
+            # 省略标记对模型有帮助，但它不是必需的：保持对话协议有效比用最后几个预算 Token
+            # 添加说明元数据更重要。
             marker = Message(
                 role="system",
                 content=f"[Context manager omitted {omitted} older execution messages.]",

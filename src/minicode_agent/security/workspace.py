@@ -1,8 +1,7 @@
-"""Resolve tool paths inside one repository boundary.
+"""在单个仓库边界内解析工具路径。
 
-All built-in file tools route user/model supplied paths through `Workspace`.
-The checks are performed after expansion and canonicalization so that relative
-paths, symlinks, and platform-specific spellings are handled consistently.
+所有内置文件工具都会通过 `Workspace` 解析用户或模型提供的路径。路径检查在展开和规范化
+之后执行，以便一致处理相对路径、符号链接和平台特定的路径写法。
 """
 
 import os
@@ -14,11 +13,10 @@ _SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template"}
 
 
 def is_sensitive_path(path: Path) -> bool:
-    """Return whether a workspace-relative path commonly contains credentials.
+    """判断相对工作区的路径是否通常包含凭据。
 
-    The check is intentionally name based rather than content based.  It blocks
-    common credential locations such as `.ssh`, `.git`, and `.env`, while
-    allowing conventional example/template environment files.
+    检查有意基于名称而不是文件内容。它会阻止 `.ssh`、`.git` 和 `.env` 等常见凭据路径，
+    同时允许常见的环境变量示例或模板文件。
     """
     for part in path.parts:
         normalized = part.casefold()
@@ -41,14 +39,14 @@ _WINDOWS_RESERVED_NAMES = {
 
 
 def _validate_windows_input(path: str) -> None:
-    """Reject drive-relative Windows paths whose meaning depends on shell state."""
+    """拒绝依赖 Shell 当前状态才能确定含义的 Windows 驱动器相对路径。"""
     parsed = PureWindowsPath(path)
     if parsed.drive and not parsed.root:
         raise WorkspaceViolation(f"drive-relative paths are blocked: {path}")
 
 
 def _validate_windows_relative_path(path: Path) -> None:
-    """Reject Windows device names and Alternate Data Stream syntax."""
+    """拒绝 Windows 设备保留名和备用数据流语法。"""
     for part in path.parts:
         if ":" in part:
             raise WorkspaceViolation(f"Windows alternate data streams are blocked: {path}")
@@ -62,11 +60,10 @@ class WorkspaceViolation(ValueError):
 
 
 class Workspace:
-    """Canonical root used by all repository tools.
+    """所有仓库工具共用的规范化根目录。
 
-    A `Workspace` stores one resolved directory and exposes only two operations:
-    resolve an external path safely and render a known path relative to that
-    directory.  It is a shared boundary object, not a filesystem sandbox.
+    `Workspace` 保存一个已解析的目录，只暴露两项操作：安全解析外部路径，以及生成已知路径
+    相对于该目录的表示。它是共享的边界对象，不是文件系统沙箱。
     """
 
     def __init__(self, root: Path) -> None:
@@ -76,7 +73,7 @@ class Workspace:
         self.root = resolved
 
     def resolve(self, path: str, *, must_exist: bool = False) -> Path:
-        """Resolve a path and reject escape, sensitive, or invalid platform forms."""
+        """解析路径，并拒绝越界、敏感或不符合平台规则的路径形式。"""
         if os.name == "nt":
             _validate_windows_input(path)
         candidate = Path(path).expanduser()
@@ -97,5 +94,5 @@ class Workspace:
         return candidate
 
     def relative(self, path: Path) -> str:
-        """Return a stable POSIX-style path relative to the workspace root."""
+        """返回相对于工作区根目录的稳定 POSIX 风格路径。"""
         return path.relative_to(self.root).as_posix()

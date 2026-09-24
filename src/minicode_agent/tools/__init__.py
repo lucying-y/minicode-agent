@@ -1,7 +1,6 @@
-"""Structured tools available to the agent.
+"""Agent 可使用的结构化工具。
 
-The public factory and registry are the normal integration points for Runtime,
-while individual tool classes remain replaceable implementation details.
+公共工厂和 Registry 是 Runtime 的常规集成入口；单个工具类则作为可替换的实现细节。
 """
 
 from minicode_agent.tools.defaults import create_default_registry

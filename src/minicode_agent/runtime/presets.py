@@ -1,8 +1,7 @@
-"""Named capability presets for common coding-agent tasks.
+"""常见 Coding Agent 任务的命名能力 Preset。
 
-A preset controls the model-visible tool set and, where appropriate, tightens
-the context budget.  It does not decide whether a write or shell call is
-approved; that is the separate `PermissionPolicy` concern.
+Preset 控制模型可见的工具集合，并在适用时收紧上下文预算。它不决定写入或 Shell 调用是否
+通过审批，那是独立的 `PermissionPolicy` 关注点。
 """
 
 from dataclasses import dataclass
@@ -21,11 +20,10 @@ class AgentPreset(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PresetDefinition:
-    """Static capability and limit choices attached to one preset.
+    """绑定到某个 Preset 的静态能力和限制配置。
 
-    `tool_names` is consumed by registry construction.  Keeping the list in a
-    data object makes the same capability contract available to CLI help, Web
-    forms, persistence, and the Runtime.
+    `tool_names` 会被 Registry 构建逻辑使用。将工具列表放在数据对象中，可以让 CLI 帮助、
+    Web 表单、持久化和 Runtime 共享同一份能力契约。
     """
 
     name: AgentPreset
